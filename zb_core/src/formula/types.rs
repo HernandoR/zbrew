@@ -146,9 +146,6 @@ impl Formula {
     }
 
     pub fn is_keg_only(&self) -> bool {
-        if self.name.contains('@') {
-            return true;
-        }
         if matches!(self.keg_only, KegOnly::No) {
             return false;
         }
@@ -397,10 +394,10 @@ mod tests {
     }
 
     #[test]
-    fn versioned_formula_is_keg_only() {
+    fn versioned_formula_is_not_keg_only_by_default() {
         let json = r#"{
-            "name": "postgresql@15",
-            "versions": { "stable": "15.8" },
+            "name": "gcc@13",
+            "versions": { "stable": "13.4.0" },
             "dependencies": [],
             "bottle": { "stable": { "files": {
                 "arm64_sonoma": { "url": "https://x.com/a.tar.gz", "sha256": "aa" }
@@ -408,6 +405,55 @@ mod tests {
         }"#;
         let formula: Formula = serde_json::from_str(json).unwrap();
         assert_eq!(formula.keg_only, KegOnly::No);
+        assert!(!formula.is_keg_only());
+    }
+
+    #[test]
+    fn versioned_formula_with_explicit_false_is_not_keg_only() {
+        let json = r#"{
+            "name": "python@3.12",
+            "versions": { "stable": "3.12.12" },
+            "dependencies": [],
+            "keg_only": false,
+            "bottle": { "stable": { "files": {
+                "arm64_sonoma": { "url": "https://x.com/a.tar.gz", "sha256": "aa" }
+            }}}
+        }"#;
+        let formula: Formula = serde_json::from_str(json).unwrap();
+        assert_eq!(formula.keg_only, KegOnly::No);
+        assert!(!formula.is_keg_only());
+    }
+
+    #[test]
+    fn versioned_formula_marked_keg_only_is_keg_only() {
+        let json = r#"{
+            "name": "postgresql@15",
+            "versions": { "stable": "15.8" },
+            "dependencies": [],
+            "keg_only": true,
+            "keg_only_reason": { "reason": ":versioned_formula", "explanation": "" },
+            "bottle": { "stable": { "files": {
+                "arm64_sonoma": { "url": "https://x.com/a.tar.gz", "sha256": "aa" }
+            }}}
+        }"#;
+        let formula: Formula = serde_json::from_str(json).unwrap();
+        assert_eq!(formula.keg_only, KegOnly::Yes);
+        assert!(formula.is_keg_only());
+    }
+
+    #[test]
+    fn versioned_formula_with_string_reason_is_keg_only() {
+        let json = r#"{
+            "name": "node@22",
+            "versions": { "stable": "22.22.1" },
+            "dependencies": [],
+            "keg_only": "this is an alternate version of another formula",
+            "bottle": { "stable": { "files": {
+                "arm64_sonoma": { "url": "https://x.com/a.tar.gz", "sha256": "aa" }
+            }}}
+        }"#;
+        let formula: Formula = serde_json::from_str(json).unwrap();
+        assert!(matches!(formula.keg_only, KegOnly::Reason(_)));
         assert!(formula.is_keg_only());
     }
 
