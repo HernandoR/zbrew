@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use tempfile::NamedTempFile;
@@ -69,6 +69,12 @@ impl BlobWriter {
             .persist(&self.final_path)
             .map_err(Error::store("failed to persist blob"))?;
         Ok(self.final_path)
+    }
+}
+
+impl Read for BlobWriter {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.temp_file.read(buf)
     }
 }
 

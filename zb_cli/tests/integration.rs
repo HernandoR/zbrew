@@ -278,3 +278,37 @@ fn test_gc_removes_unused_store_entries() {
     assert_success(&t.zb(&["gc"]), "zb gc");
     assert_eq!(t.count_store_entries(), 0);
 }
+
+/// `zb reset` recursively deletes the contents of --root and --prefix and can
+/// escalate to `sudo rm -rf`. Both values come straight from flags/environment,
+/// so a stale or mistyped value must be refused before anything is deleted.
+///
+/// These paths are deliberately shallow AND non-existent: if the guard ever
+/// regresses, the command finds nothing to delete rather than destroying a real
+/// directory, and the test still fails on the missing error message.
+#[test]
+fn reset_refuses_dangerous_root_and_prefix() {
+    let zb = env!("CARGO_BIN_EXE_zb");
+
+    for dangerous in ["/", "/zzz-zerobrew-guard-test"] {
+        let output = Command::new(zb)
+            .env("ZEROBREW_ROOT", dangerous)
+            .env("ZEROBREW_PREFIX", dangerous)
+            .env("ZEROBREW_AUTO_INIT", "true")
+            .args(["reset", "--yes"])
+            .output()
+            .unwrap_or_else(|e| panic!("failed to execute {zb}: {e}"));
+
+        assert!(
+            !output.status.success(),
+            "reset must refuse {dangerous}, but it exited successfully"
+        );
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stderr.contains("refusing") || stdout.contains("refusing"),
+            "reset must explain why it refused {dangerous}.\nstdout: {stdout}\nstderr: {stderr}"
+        );
+    }
+}

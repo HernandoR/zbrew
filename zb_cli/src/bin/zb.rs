@@ -35,6 +35,15 @@ async fn run(cli: Cli) -> Result<(), zb_core::Error> {
         return commands::init::execute(&root, &prefix, no_modify_path, &mut ui);
     }
 
+    // `reset` recursively deletes both directories, so refuse a dangerous root or
+    // prefix up front -- before create_installer(), which would otherwise create
+    // its directory tree underneath an unvalidated path. reset::execute checks
+    // again for the benefit of non-CLI callers.
+    if matches!(cli.command, Commands::Reset { .. }) {
+        zb_io::validate_destructive_path(&root)?;
+        zb_io::validate_destructive_path(&prefix)?;
+    }
+
     if !matches!(cli.command, Commands::Reset { .. }) {
         ensure_init(&root, &prefix, cli.auto_init, &mut ui)?;
     }
