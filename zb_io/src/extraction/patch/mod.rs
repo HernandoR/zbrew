@@ -2,6 +2,9 @@
 pub mod linux;
 
 #[cfg(target_os = "macos")]
+mod macho;
+
+#[cfg(target_os = "macos")]
 pub mod macos;
 
 #[cfg(target_os = "linux")]
