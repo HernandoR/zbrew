@@ -213,13 +213,20 @@ fn patch_elf_placeholders(keg_path: &Path, prefix_dir: &Path) -> Result<(), Erro
             let content = fs::read(path)?;
             let mut elf = arwen::elf::ElfContainer::parse(&content)?;
 
-            // Check if it is a dynamic ELF
+            // Check if it is a dynamic ELF.
+            //
+            // `.0` unwraps object 0.40's newtypes (`ProgramType`, `FileType`)
+            // back to the raw integer. The header and segment values on the
+            // left come from `arwen`, which links its own, older `object`, so
+            // the two sides are different crate versions and the newtypes do
+            // not unify. Comparing the raw values is still correct: these are
+            // ELF ABI constants, fixed by the spec, not crate-defined numbers.
             let has_dynamic_segment = elf
                 .inner
                 .builder()
                 .segments
                 .iter()
-                .any(|s| s.p_type == object::elf::PT_DYNAMIC);
+                .any(|s| s.p_type == object::elf::PT_DYNAMIC.0);
             if !has_dynamic_segment {
                 return Ok(());
             }
@@ -250,8 +257,8 @@ fn patch_elf_placeholders(keg_path: &Path, prefix_dir: &Path) -> Result<(), Erro
             }
 
             // Interpreter
-            let is_executable = elf.inner.builder().header.e_type == object::elf::ET_EXEC
-                || (elf.inner.builder().header.e_type == object::elf::ET_DYN
+            let is_executable = elf.inner.builder().header.e_type == object::elf::ET_EXEC.0
+                || (elf.inner.builder().header.e_type == object::elf::ET_DYN.0
                     && elf.inner.elf_interpreter().is_some());
 
             if is_executable && let Some(current_interp_bytes) = elf.inner.elf_interpreter() {
