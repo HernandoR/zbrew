@@ -17,6 +17,7 @@ require "json"
 require "tmpdir"
 require "tempfile"
 require "digest/sha2"
+require "etc"
 
 module ZeroBrewChecksum
   module_function
@@ -96,6 +97,12 @@ module Hardware
     def self.is_64_bit?
       true
     end
+
+    def self.cores
+      Etc.nprocessors
+    rescue StandardError
+      1
+    end
   end
 end
 
@@ -112,6 +119,48 @@ module Kernel
   def odie(message)
     $stderr.puts "Error: #{message}"
     exit 1
+  end
+
+  def ohai(title, *sput)
+    puts "==> #{title}"
+    puts sput unless sput.empty?
+  end
+
+  def opoo(message)
+    $stderr.puts "Warning: #{message}"
+  end
+
+  # Mirrors Homebrew's Kernel#which: the first executable file named `cmd`
+  # found on `path`, as a Pathname, or nil.
+  def which(cmd, path = ENV.fetch("PATH", nil))
+    zerobrew_path_entries(path).each do |dir|
+      candidate = begin
+        File.expand_path(cmd, dir)
+      rescue ArgumentError
+        # File.expand_path raises on malformed paths (e.g. a bare "~" entry).
+        next
+      end
+      return Pathname.new(candidate) if File.file?(candidate) && File.executable?(candidate)
+    end
+    nil
+  end
+
+  # Mirrors Homebrew's Kernel#which_all: every match on `path`, deduplicated.
+  def which_all(cmd, path = ENV.fetch("PATH", nil))
+    zerobrew_path_entries(path).filter_map do |dir|
+      candidate = begin
+        File.expand_path(cmd, dir)
+      rescue ArgumentError
+        next
+      end
+      Pathname.new(candidate) if File.file?(candidate) && File.executable?(candidate)
+    end.uniq
+  end
+
+  private
+
+  def zerobrew_path_entries(path)
+    Array(path).flat_map { |entry| entry.to_s.split(File::PATH_SEPARATOR) }.reject(&:empty?)
   end
 end
 
@@ -139,6 +188,8 @@ end
 
 module Homebrew
   module EnvExtension
+    CC_FLAG_VARS = %w[CFLAGS CXXFLAGS OBJCFLAGS OBJCXXFLAGS].freeze
+
     def append(key, value, separator = " ")
       existing = self[key]
       self[key] = existing && !existing.empty? ? "#{existing}#{separator}#{value}" : value.to_s
@@ -160,6 +211,47 @@ module Homebrew
     def prepend_create_path(key, path)
       FileUtils.mkdir_p(path.to_s)
       prepend(key, path, ":")
+    end
+
+    def append_to_cflags(value)
+      CC_FLAG_VARS.each { |key| append(key, value) }
+    end
+
+    def remove_from_cflags(value)
+      remove(CC_FLAG_VARS, value)
+    end
+
+    def remove(keys, value)
+      return if value.nil?
+
+      Array(keys).each do |key|
+        old_value = self[key]
+        next if old_value.nil?
+
+        new_value = old_value.sub(value, "")
+        if new_value.empty?
+          delete(key)
+        else
+          self[key] = new_value
+        end
+      end
+    end
+
+    def deparallelize
+      old = self["MAKEFLAGS"]
+      remove("MAKEFLAGS", /-j\d+/)
+      if block_given?
+        begin
+          yield
+        ensure
+          self["MAKEFLAGS"] = old
+        end
+      end
+      old
+    end
+
+    def make_jobs
+      self["MAKEFLAGS"].to_s =~ /-\w*j(\d+)/ ? Regexp.last_match(1).to_i : Hardware::CPU.cores
     end
   end
 end

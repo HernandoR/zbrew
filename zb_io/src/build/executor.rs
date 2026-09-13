@@ -461,6 +461,105 @@ end
     }
 
     #[tokio::test]
+    async fn run_build_supports_which_helper() {
+        let Some(ruby) = find_ruby().await.ok() else {
+            return;
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("source");
+        std::fs::create_dir_all(&source_root).unwrap();
+
+        let formula = r#"
+class Foo < Formula
+  def install
+    sh = which("sh")
+    raise "which(\"sh\") returned nil" if sh.nil?
+    raise "which did not return a Pathname: #{sh.class}" unless sh.is_a?(Pathname)
+    raise "which returned a non-executable path: #{sh}" unless File.executable?(sh.to_s)
+
+    missing = which("zb-definitely-not-a-real-binary")
+    raise "which returned #{missing} for a missing binary" unless missing.nil?
+
+    scoped = which("sh", "/zb-nonexistent-dir")
+    raise "which ignored the path argument: #{scoped}" unless scoped.nil?
+
+    all = which_all("sh")
+    raise "which_all did not return an Array: #{all.class}" unless all.is_a?(Array)
+    raise "which_all missed sh" unless all.include?(sh)
+
+    (prefix + "which-result").write(sh.to_s)
+  end
+end
+"#;
+
+        let prefix = tmp.path().join("prefix");
+        run_shim_formula(&ruby, &source_root, &prefix, formula)
+            .await
+            .unwrap();
+
+        let recorded = std::fs::read_to_string(
+            prefix
+                .join("Cellar")
+                .join("foo")
+                .join("1.0.0")
+                .join("which-result"),
+        )
+        .unwrap();
+        assert!(Path::new(recorded.trim()).is_absolute());
+    }
+
+    #[tokio::test]
+    async fn run_build_supports_env_helpers() {
+        let Some(ruby) = find_ruby().await.ok() else {
+            return;
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("source");
+        std::fs::create_dir_all(&source_root).unwrap();
+
+        let formula = r#"
+class Foo < Formula
+  def install
+    ENV["MAKEFLAGS"] = "-j8"
+    raise "make_jobs did not read MAKEFLAGS: #{ENV.make_jobs}" unless ENV.make_jobs == 8
+
+    inner = nil
+    ENV.deparallelize { inner = ENV["MAKEFLAGS"] }
+    raise "deparallelize did not clear MAKEFLAGS" unless inner.nil?
+    raise "deparallelize did not restore MAKEFLAGS" unless ENV["MAKEFLAGS"] == "-j8"
+
+    ENV.delete("CFLAGS")
+    ENV.delete("CXXFLAGS")
+    ENV.append_to_cflags("-DZB=1")
+    raise "append_to_cflags missed CFLAGS" unless ENV["CFLAGS"] == "-DZB=1"
+    raise "append_to_cflags missed CXXFLAGS" unless ENV["CXXFLAGS"] == "-DZB=1"
+
+    ENV.remove_from_cflags("-DZB=1")
+    raise "remove_from_cflags left CFLAGS" unless ENV["CFLAGS"].nil?
+
+    (prefix + "done").write("ok")
+  end
+end
+"#;
+
+        let prefix = tmp.path().join("prefix");
+        run_shim_formula(&ruby, &source_root, &prefix, formula)
+            .await
+            .unwrap();
+
+        assert!(
+            prefix
+                .join("Cellar")
+                .join("foo")
+                .join("1.0.0")
+                .join("done")
+                .exists()
+        );
+    }
+
+    #[tokio::test]
     async fn run_build_rejects_patch_checksum_mismatch() {
         let Some(ruby) = find_ruby().await.ok() else {
             return;
