@@ -6,10 +6,66 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rayon::prelude::*;
-use tracing::warn;
+use tracing::{debug, warn};
 use zb_core::Error;
 
 const LINUX_HOMEBREW_PREFIX: &str = "/home/linuxbrew/.linuxbrew";
+
+/// Number of leading bytes needed to read `e_ident` and `e_type` from an ELF
+/// header. `e_type` sits at offset 16 for both ELF32 and ELF64.
+const ELF_TYPE_PROBE_LEN: usize = 18;
+
+/// What a cheap ELF header probe says about a file, before any full parse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ElfKind {
+    /// Not an ELF file (no magic, unreadable, or truncated header).
+    NotElf,
+    /// A valid ELF file that cannot carry runtime search paths: relocatable
+    /// objects (`ET_REL`, i.e. `.o` files and kernel modules), core dumps, and
+    /// anything else that is neither `ET_EXEC` nor `ET_DYN`.
+    NoRuntimePaths,
+    /// `ET_EXEC` or `ET_DYN`: may carry RPATH/RUNPATH and an interpreter.
+    Patchable,
+}
+
+/// Classify a file from its first few header bytes without reading the body.
+///
+/// Homebrew bottles ship relocatable objects alongside executables and shared
+/// libraries (`llvm` alone ships thousands of `.o` files). Those have no
+/// dynamic segment, no RPATH and no interpreter, so there is nothing to patch,
+/// and handing them to the ELF rewriter only produces spurious parse errors:
+/// C++ objects use `SHT_GROUP` (COMDAT) sections, which the rewriter cannot
+/// represent. Filtering them out here keeps genuine failures warn-worthy.
+fn classify_elf(path: &Path) -> ElfKind {
+    let mut file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return ElfKind::NotElf,
+    };
+
+    let mut head = [0u8; ELF_TYPE_PROBE_LEN];
+    if file.read_exact(&mut head).is_err() {
+        return ElfKind::NotElf;
+    }
+    if head[..4] != *b"\x7fELF" {
+        return ElfKind::NotElf;
+    }
+
+    // `e_ident[EI_DATA]` selects the byte order of every multi-byte header
+    // field, including `e_type`. `.0` unwraps object 0.40's newtypes back to
+    // the raw ELF ABI constants.
+    const EI_DATA: usize = 5;
+    let e_type = match head[EI_DATA] {
+        x if x == object::elf::ELFDATA2LSB.0 => u16::from_le_bytes([head[16], head[17]]),
+        x if x == object::elf::ELFDATA2MSB.0 => u16::from_be_bytes([head[16], head[17]]),
+        _ => return ElfKind::NotElf,
+    };
+
+    if e_type == object::elf::ET_EXEC.0 || e_type == object::elf::ET_DYN.0 {
+        ElfKind::Patchable
+    } else {
+        ElfKind::NoRuntimePaths
+    }
+}
 
 /// Patch @@HOMEBREW_CELLAR@@ and @@HOMEBREW_PREFIX@@ placeholders in both ELF binaries and text files.
 #[cfg(target_os = "linux")]
@@ -130,7 +186,11 @@ fn find_system_ld_so() -> Option<PathBuf> {
 
 /// Patch @@HOMEBREW_CELLAR@@ and @@HOMEBREW_PREFIX@@ placeholders in ELF binaries.
 /// Uses `arwen` crate to natively update RPATH, RUNPATH, and optionally the ELF interpreter.
-fn patch_elf_placeholders(keg_path: &Path, prefix_dir: &Path) -> Result<(), Error> {
+///
+/// Returns the number of files that were eligible for patching but could not be
+/// patched. Files that carry no runtime search paths are not eligible and are
+/// not counted.
+fn patch_elf_placeholders(keg_path: &Path, prefix_dir: &Path) -> Result<usize, Error> {
     let lib_path = prefix_dir.join("lib").to_string_lossy().to_string();
 
     // Detect if zerobrew has installed its own glibc
@@ -146,23 +206,24 @@ fn patch_elf_placeholders(keg_path: &Path, prefix_dir: &Path) -> Result<(), Erro
         find_system_ld_so()
     };
 
-    // Collect all ELF files
+    // Collect the ELF files that can actually carry runtime search paths.
+    // Relocatable objects and core dumps are skipped quietly: they have nothing
+    // to patch, so failing to rewrite them is not an error worth reporting.
     let elf_files: Vec<PathBuf> = walkdir::WalkDir::new(keg_path)
         .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-        .filter(|e| {
-            // Read only first 4 bytes to check magic
-            let mut file = match fs::File::open(e.path()) {
-                Ok(f) => f,
-                Err(_) => return false,
-            };
-            let mut magic = [0u8; 4];
-            if file.read_exact(&mut magic).is_ok() {
-                return magic == *b"\x7fELF";
+        .filter(|e| match classify_elf(e.path()) {
+            ElfKind::Patchable => true,
+            ElfKind::NoRuntimePaths => {
+                debug!(
+                    path = %e.path().display(),
+                    "skipping ELF without runtime search paths"
+                );
+                false
             }
-            false
+            ElfKind::NotElf => false,
         })
         .map(|e| e.path().to_path_buf())
         .collect();
@@ -314,7 +375,7 @@ fn patch_elf_placeholders(keg_path: &Path, prefix_dir: &Path) -> Result<(), Erro
         );
     }
 
-    Ok(())
+    Ok(failures)
 }
 
 /// Patch text files containing @@HOMEBREW_...@@ placeholders
@@ -517,6 +578,118 @@ mod tests {
             new_mode & 0o777,
             "permissions should be preserved after patching"
         );
+    }
+
+    /// Compile a C++ relocatable object that contains `SHT_GROUP` (COMDAT)
+    /// sections, the shape that llvm's `lib/objects-Release/**/*.o` files have.
+    fn compile_comdat_object(dir: &Path, name: &str) -> Option<PathBuf> {
+        let src_path = dir.join(format!("{}.cpp", name));
+        let source = r#"
+#include <string>
+#include <vector>
+template <typename T> struct Box { T v; T get() const { return v; } };
+inline int helper(int x) { return x + 1; }
+std::vector<std::string> names() { return {"a", "b"}; }
+int value() { Box<int> b{1}; return b.get() + helper(2); }
+"#;
+        fs::write(&src_path, source).ok()?;
+
+        let out_path = dir.join(format!("{}.o", name));
+        let status = Command::new("c++")
+            .arg("-c")
+            .arg(&src_path)
+            .arg("-o")
+            .arg(&out_path)
+            // -fno-inline forces the inline/template bodies to be emitted
+            // out-of-line into COMDAT groups instead of being inlined away.
+            .args([
+                "-O0",
+                "-fno-inline",
+                "-ffunction-sections",
+                "-fdata-sections",
+            ])
+            .status()
+            .ok()?;
+
+        if status.success() {
+            Some(out_path)
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn classifies_relocatable_objects_as_unpatchable() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+
+        // Not an ELF file at all.
+        let text = dir.join("notes.txt");
+        fs::write(&text, "just text").unwrap();
+        assert_eq!(classify_elf(&text), ElfKind::NotElf);
+
+        // Too short to hold an ELF header.
+        let stub = dir.join("stub");
+        fs::write(&stub, b"\x7fELF").unwrap();
+        assert_eq!(classify_elf(&stub), ElfKind::NotElf);
+
+        // A static archive starts with "!<arch>\n", not the ELF magic.
+        let archive = dir.join("libfoo.a");
+        fs::write(
+            &archive,
+            b"!<arch>\n/               0           0     0     0       4         `\n",
+        )
+        .unwrap();
+        assert_eq!(classify_elf(&archive), ElfKind::NotElf);
+
+        match compile_comdat_object(dir, "reloc") {
+            Some(obj) => assert_eq!(
+                classify_elf(&obj),
+                ElfKind::NoRuntimePaths,
+                "ET_REL objects carry no RPATH or interpreter"
+            ),
+            None => eprintln!("Skipping ET_REL classification: c++ not found"),
+        }
+
+        match compile_dummy_elf(dir, "exe") {
+            Some(exe) => assert_eq!(classify_elf(&exe), ElfKind::Patchable),
+            None => eprintln!("Skipping ET_EXEC/ET_DYN classification: cc not found"),
+        }
+    }
+
+    /// Regression test for issue #13 / upstream #346: llvm bottles ship C++
+    /// relocatable objects with COMDAT groups. The ELF rewriter cannot parse
+    /// those, so before the fix every one of them produced a
+    /// "Failed to patch ELF ... parse error" warning and bumped the failure
+    /// count, even though there was nothing to patch.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn relocatable_objects_do_not_count_as_patch_failures() {
+        let tmp = TempDir::new().unwrap();
+        let prefix = tmp.path().join("prefix");
+        let pkg_dir = prefix.join("Cellar/llvm/22.1.4");
+        let obj_dir = pkg_dir.join("lib/objects-Release/obj.MLIRCAPIIR");
+
+        fs::create_dir_all(&obj_dir).unwrap();
+
+        let obj = match compile_comdat_object(&obj_dir, "BuiltinAttributes.cpp") {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping COMDAT object test: c++ not found");
+                return;
+            }
+        };
+        let before = fs::read(&obj).unwrap();
+
+        let failures = patch_elf_placeholders(&pkg_dir, &prefix).unwrap();
+        assert_eq!(
+            failures, 0,
+            "relocatable objects have no runtime paths and must be skipped quietly"
+        );
+
+        // The object must be left byte-identical: we never rewrite it.
+        assert_eq!(before, fs::read(&obj).unwrap());
     }
 
     #[test]
