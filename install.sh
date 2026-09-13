@@ -61,9 +61,11 @@ ZBREW_REPO="https://github.com/HernandoR/zbrew.git"
 ORIGINAL_PATH="$PATH"
 PREVIOUS_ZB_VERSION=""
 
-if [[ -d "/opt/zbrew" ]]; then
-    ZBREW_ROOT="/opt/zbrew"
-elif [[ "$(uname -s)" == "Darwin" ]]; then
+# Mirrors get_root_path in zb_cli. A directory that merely happens to exist
+# under /opt does not select the root: on Linux that let a stray /opt/zbrew
+# override the XDG location that `zb` would pick on its own, so the two
+# disagreed about where the install lived.
+if [[ "$(uname -s)" == "Darwin" ]]; then
     ZBREW_ROOT="/opt/zbrew"
 else
     XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"

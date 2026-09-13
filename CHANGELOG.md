@@ -1,11 +1,20 @@
 # Changelog
 
-All notable changes to zerobrew will be documented in this file.
+All notable changes to zbrew will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+- **The project is now called `zbrew`.** One name throughout: the product, the default prefix, the `ZBREW_*` environment variables, the repository, the tap and the formula. The `zb` and `zbx` binaries are unchanged. The new name is five characters for a reason — see the prefix fix below
+- The default macOS prefix moves from `/opt/zerobrew` to `/opt/zbrew`, and the Linux data directory from `$XDG_DATA_HOME/zerobrew` to `$XDG_DATA_HOME/zbrew`. There is **no migration**: an existing `/opt/zerobrew` install is no longer detected and is simply left where it is, so remove it by hand once you have reinstalled what you need. The managed shell block is likewise re-keyed from `# >>> zerobrew >>>` to `# >>> zbrew >>>`, so the old block is not matched, not updated and not removed — delete it from your `~/.zshrc`, `~/.bash_profile` or `~/.profile` yourself
+- `zb init` now **refuses** a prefix too long to patch into this machine's bottles rather than printing a note and continuing. What the check prevents is invisible at install time, so continuing past it was never the right default
+
+### Fixed
+- The Mach-O prefix-length budget is derived from the host's architecture and from the tag of the bottle actually selected, instead of being hardcoded to Apple Silicon's 13 characters. Bottles for Intel Macs are built against `/usr/local`, so the budget there is 10, and the old constant gave a false all-clear on exactly the configuration that failed: `/opt/zerobrew` was 13 characters, passed the check, then could not be patched, and the package installed cleanly and failed at run time — `gpgconf` being the reported case. `/opt/zbrew` is 10 characters and fits both architectures, so the default configuration is now correct everywhere without an architecture-specific special case ([#86](https://github.com/HernandoR/zbrew/issues/86))
+- An over-budget prefix is now caught before anything is downloaded, and the remedy the error offers is checked to fit the budget it is reported for. The old advice suggested `/opt/zerobrew`, which was itself over the Intel budget, so following it changed nothing
 
 ## [0.3.3] - 2026-09-13
 
@@ -168,8 +177,8 @@ To get an idea of the initial features zerobrew supports, take a look at the [RE
 
 See the [full commit history](https://github.com/lucasgelfond/zerobrew/commits/v0.1.1) for more details.
 
-[Unreleased]: https://github.com/HernandoR/zerobrew/compare/v0.3.3...HEAD
-[0.3.3]: https://github.com/HernandoR/zerobrew/compare/v0.3.2...v0.3.3
+[Unreleased]: https://github.com/HernandoR/zbrew/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/HernandoR/zbrew/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/lucasgelfond/zerobrew/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/lucasgelfond/zerobrew/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/lucasgelfond/zerobrew/compare/v0.2.1...v0.3.0

@@ -4,10 +4,10 @@ set unstable
 set lists
 set script-interpreter := ['bash', '-euo', 'pipefail']
 
+# Mirrors get_root_path in zb_cli: an existing /opt/zbrew does not select the
+# root by itself, or a stray directory would override the XDG location on Linux.
 ZBREW_ROOT := if env('ZBREW_ROOT', '') != '' {
     env('ZBREW_ROOT')
-} else if path_exists('/opt/zbrew') == 'true' {
-    '/opt/zbrew'
 } else if os() == 'macos' {
     '/opt/zbrew'
 } else {
