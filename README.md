@@ -33,20 +33,22 @@
 ## Install
 
 ```bash
-curl -fsSL https://zerobrew.rs/install | bash
+curl -fsSL https://raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh | bash
 ```
 
 The installer updates your shell config. After it finishes, restart your terminal
 or run the `source` command it prints.
 
+> `https://zerobrew.rs/install` still serves the **upstream** installer, and this fork
+> does not control that domain. Use the URL above to install this fork.
+
 Or via Homebrew:
 
 ```bash
-brew install lucasgelfond/zerobrew/zerobrew
+brew install HernandoR/zerobrew/zerobrew
 ```
 
-> The installer and the Homebrew tap above currently ship the last **upstream** release
-> binaries. Fork releases are on the roadmap. To run this fork today, build from source:
+Or build from source:
 
 ```bash
 git clone https://github.com/HernandoR/zerobrew.git
@@ -54,12 +56,16 @@ cd zerobrew
 just install            # or: cargo install --path zb_cli --locked
 ```
 
+> Until this fork has published a stable release, the installer finds no prebuilt
+> binary and builds from source instead, which needs a Rust toolchain and takes a
+> few minutes.
+
 ## Update zerobrew
 
 If you used the standalone installer, rerun it:
 
 ```bash
-curl -fsSL https://zerobrew.rs/install | bash
+curl -fsSL https://raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh | bash
 zb --version
 ```
 

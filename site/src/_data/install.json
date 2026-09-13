@@ -1,8 +1,8 @@
 {
   "title": "Install",
   "tabs": [
-    { "name": "bash", "command": "curl -fsSL https://zerobrew.rs/install | bash" },
-    { "name": "brew", "command": "brew install zerobrew" },
+    { "name": "bash", "command": "curl -fsSL https://raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh | bash" },
+    { "name": "brew", "command": "brew install HernandoR/zerobrew/zerobrew" },
     { "name": "aur", "command": "yay -S zerobrew-bin" }
   ]
 }

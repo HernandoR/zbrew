@@ -28,7 +28,7 @@ jobs:
   build:
     name: Build ${{ matrix.artifact_name }}
     runs-on: ${{ matrix.os }}
-    if: github.repository == 'lucasgelfond/zerobrew'
+    if: github.repository == 'HernandoR/zerobrew'
     strategy:
       fail-fast: false
       matrix:
@@ -137,3 +137,7 @@ jobs:
           files: assets/*
           generate_release_notes: true
           draft: false
+          # A tag with a pre-release suffix (v0.3.3-rc.1) is published as a
+          # pre-release, so `releases/latest` — which install.sh downloads
+          # from — keeps pointing at the last stable release.
+          prerelease: ${{ contains(github.ref_name, '-') }}

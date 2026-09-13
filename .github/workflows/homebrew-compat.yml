@@ -5,7 +5,13 @@ on:
     # Run weekly on Sunday at 9 PM ET (1 AM UTC Monday)
     - cron: '0 1 * * 1'
   workflow_dispatch:
+    inputs:
+      macos:
+        description: 'Also run on macOS'
+        type: boolean
+        default: false
   pull_request:
+    types: [ opened, synchronize, reopened, labeled ]
     paths:
       - 'zb_io/src/build/shim.rb'
       - '.github/workflows/homebrew-compat.yml'
@@ -15,10 +21,37 @@ permissions:
   issues: write
 
 jobs:
+  targets:
+    name: select targets
+    runs-on: ubuntu-latest
+    outputs:
+      os: ${{ steps.select.outputs.os }}
+    steps:
+      - name: select targets
+        id: select
+        env:
+          # macOS runners bill at ten times the Linux rate, so — as in the
+          # test workflow — that entry is opt-in: dispatch this workflow with
+          # `macos`, or label a pull request `ci-macos`. The weekly schedule
+          # runs Linux only.
+          RUN_MACOS: >-
+            ${{ contains(github.event.pull_request.labels.*.name, 'ci-macos')
+            || inputs.macos }}
+        run: |
+          if [ "$RUN_MACOS" = "true" ]; then
+            echo 'os=["ubuntu-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'Running on ubuntu-latest and macos-latest.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'Running on ubuntu-latest only. Add the `ci-macos` label to this pull request to run on macOS.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   test-compatibility:
+    needs: targets
     strategy:
+      fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: ${{ fromJSON(needs.targets.outputs.os) }}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -44,7 +77,10 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Setup Homebrew
-        uses: Homebrew/actions/setup-homebrew@master
+        # Homebrew/actions renamed its default branch from `master` to `main`,
+        # so `@master` no longer resolves and every run of this workflow failed
+        # at "Set up job" before doing any work.
+        uses: Homebrew/actions/setup-homebrew@main
 
       - name: Get Homebrew version
         id: brew-version
