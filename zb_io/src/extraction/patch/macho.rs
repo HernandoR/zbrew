@@ -203,7 +203,7 @@ fn thin_regions(
 
     let mut offset = header_size;
     for _ in 0..ncmds {
-        let cmd = endian.u32(image, offset)?;
+        let cmd = macho::LoadCommandType(endian.u32(image, offset)?);
         let cmdsize = endian.u32(image, offset + 4)? as usize;
         if cmdsize < 8 || offset + cmdsize > commands_end {
             return Err(MachoError::Malformed("load command overruns the header"));
@@ -239,7 +239,7 @@ fn thin_regions(
 }
 
 /// Load commands whose payload begins with an `lc_str` at byte 8.
-fn has_lc_str(cmd: u32) -> bool {
+fn has_lc_str(cmd: macho::LoadCommandType) -> bool {
     matches!(
         cmd,
         macho::LC_ID_DYLIB
@@ -292,7 +292,7 @@ fn segment_regions(
             )
         };
 
-        if flags & macho::SECTION_TYPE != macho::S_CSTRING_LITERALS || size == 0 {
+        if flags & macho::SECTION_TYPE != u32::from(macho::S_CSTRING_LITERALS.0) || size == 0 {
             continue;
         }
 
@@ -438,7 +438,7 @@ pub(crate) mod test_support {
             out.extend(0u32.to_le_bytes()); // reserved
 
             // LC_SEGMENT_64 __TEXT
-            out.extend(macho::LC_SEGMENT_64.to_le_bytes());
+            out.extend(macho::LC_SEGMENT_64.0.to_le_bytes());
             out.extend((segment_size as u32).to_le_bytes());
             out.extend(fixed16("__TEXT"));
             out.extend(0u64.to_le_bytes()); // vmaddr
@@ -461,7 +461,7 @@ pub(crate) mod test_support {
                 "__TEXT",
                 self.cstrings.len(),
                 cstring_offset,
-                macho::S_CSTRING_LITERALS,
+                u32::from(macho::S_CSTRING_LITERALS.0),
             ));
 
             for command in &rpath_commands {
@@ -478,7 +478,7 @@ pub(crate) mod test_support {
     fn rpath_command(path: &str) -> Vec<u8> {
         let cmdsize = (12 + path.len() + 1).next_multiple_of(8);
         let mut out = Vec::new();
-        out.extend(macho::LC_RPATH.to_le_bytes());
+        out.extend(macho::LC_RPATH.0.to_le_bytes());
         out.extend((cmdsize as u32).to_le_bytes());
         out.extend(12u32.to_le_bytes()); // lc_str offset
         out.extend(path.as_bytes());
