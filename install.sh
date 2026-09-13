@@ -260,7 +260,46 @@ finalize_installation() {
     completed "Installation complete"
 }
 
-resolve_release_asset() {
+# The glibc Linux release binaries are built on ubuntu-22.04, so they need
+# glibc 2.35 or newer. Older distributions and containers (Google Colab, for
+# example) must use the statically linked musl build instead.
+# see https://github.com/HernandoR/zerobrew/issues/10
+GLIBC_MIN_MINOR=35
+
+glibc_is_new_enough() {
+    local version major minor
+
+    # On musl systems `ldd --version` writes to stderr and exits non-zero,
+    # which leaves version empty and selects the musl asset.
+    version=$(ldd --version 2>/dev/null | head -n1 | grep -Eo '[0-9]+\.[0-9]+' | tail -n1) || true
+
+    if [[ -z "$version" ]]; then
+        return 1
+    fi
+
+    major="${version%%.*}"
+    minor="${version##*.}"
+
+    if ((major > 2)); then
+        return 0
+    fi
+
+    ((major == 2 && minor >= GLIBC_MIN_MINOR))
+}
+
+linux_asset_candidates() {
+    local binary_name="$1"
+    local arch="$2"
+
+    if glibc_is_new_enough; then
+        printf '%s\n%s\n' "${binary_name}-linux-${arch}" "${binary_name}-linux-${arch}-musl"
+    else
+        printf '%s\n%s\n' "${binary_name}-linux-${arch}-musl" "${binary_name}-linux-${arch}"
+    fi
+}
+
+# Prints the release asset names for this platform, most preferred first.
+resolve_release_assets() {
     local binary_name="$1"
     local os arch
     os=$(uname -s)
@@ -274,15 +313,24 @@ resolve_release_asset() {
         echo "${binary_name}-darwin-x64"
         ;;
     Linux/arm64 | Linux/aarch64)
-        echo "${binary_name}-linux-arm64"
+        linux_asset_candidates "$binary_name" "arm64"
         ;;
     Linux/x86_64 | Linux/amd64)
-        echo "${binary_name}-linux-x64"
+        linux_asset_candidates "$binary_name" "x64"
         ;;
     *)
         return 1
         ;;
     esac
+}
+
+# A binary can download fine and still be unusable — a glibc build on a host
+# with an older glibc exits with a loader error. Check before keeping it.
+release_binary_runs() {
+    local binary_path="$1"
+
+    [[ -x "$binary_path" ]] || return 1
+    "$binary_path" --version >/dev/null 2>&1
 }
 
 download_release_binary() {
@@ -325,25 +373,47 @@ download_release_binary() {
 }
 
 try_release_install() {
-    local zb_asset zbx_asset
+    local zb_assets_raw asset zb_asset="" zbx_asset
+    local zb_candidates=()
 
     DOWNLOAD_TEMP_DIR=$(mktemp -d)
     DOWNLOADED_ZB_PATH=""
     DOWNLOADED_ZBX_PATH=""
 
-    if ! zb_asset=$(resolve_release_asset "zb"); then
+    if ! zb_assets_raw=$(resolve_release_assets "zb"); then
         warn "No prebuilt release binary for zb on $(uname -s)/$(uname -m). Falling back to source build."
         return 1
     fi
 
-    if ! download_release_binary "$zb_asset" "zb" "true"; then
-        warn "Release binary download failed for ${zb_asset}. Falling back to source build."
+    while IFS= read -r asset; do
+        if [[ -n "$asset" ]]; then
+            zb_candidates+=("$asset")
+        fi
+    done <<<"$zb_assets_raw"
+
+    if [[ ${#zb_candidates[@]} -eq 0 ]]; then
+        warn "No prebuilt release binary for zb on $(uname -s)/$(uname -m). Falling back to source build."
         return 1
     fi
 
-    if zbx_asset=$(resolve_release_asset "zbx"); then
-        download_release_binary "$zbx_asset" "zbx" "false"
+    for asset in "${zb_candidates[@]}"; do
+        if download_release_binary "$asset" "zb" "true" && release_binary_runs "$DOWNLOADED_ZB_PATH"; then
+            zb_asset="$asset"
+            break
+        fi
+        warn "${ORANGE}${asset}${NC} is unavailable or does not run on this system."
+        DOWNLOADED_ZB_PATH=""
+        rm -f "$DOWNLOAD_TEMP_DIR/zb"
+    done
+
+    if [[ -z "$zb_asset" ]]; then
+        warn "No usable release binary for zb on $(uname -s)/$(uname -m). Falling back to source build."
+        return 1
     fi
+
+    # Take zbx from the same build variant as the zb that works here.
+    zbx_asset="zbx-${zb_asset#zb-}"
+    download_release_binary "$zbx_asset" "zbx" "false"
 
     local binaries_to_install=("$DOWNLOADED_ZB_PATH")
     if [[ -n "$DOWNLOADED_ZBX_PATH" && -f "$DOWNLOADED_ZBX_PATH" ]]; then
