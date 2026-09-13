@@ -1,29 +1,20 @@
+mod relocation;
+
 use std::fs;
-use std::io::Read as _;
+use std::io::{Read as _, Write as _};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tracing::warn;
+use tracing::{debug, warn};
 use zb_core::Error;
 
 use super::macho::{self, Region};
-
-/// Homebrew install prefixes that may be baked into a bottle, longest first so
-/// that the longest match wins when one prefix contains another.
-const HOMEBREW_PREFIXES: &[&str] = &[
-    "/home/linuxbrew/.linuxbrew",
-    "/usr/local/Homebrew",
-    "/opt/homebrew",
-    "/usr/local",
-];
-
-/// Sub-paths that mark `/usr/local/...` as a Homebrew path rather than a plain
-/// system path. `/usr/local` is a shared location — `/usr/local/lib/libfoo.dylib`
-/// is usually a genuine system library — so it is only rewritten when what
-/// follows it belongs to Homebrew.
-const HOMEBREW_SUBPATHS: &[&str] = &["/Cellar/", "/Caskroom/", "/Homebrew/", "/opt/"];
+use relocation::{
+    HOMEBREW_PREFIXES, diagnose_skipped, entitlements_plist, homebrew_prefix_at,
+    rewrite_homebrew_prefixes,
+};
 
 /// Patch hardcoded Homebrew paths in text files.
 fn patch_text_file_strings(path: &Path, new_prefix: &str, new_cellar: &str) -> Result<(), Error> {
@@ -106,90 +97,82 @@ fn patch_text_file_strings(path: &Path, new_prefix: &str, new_cellar: &str) -> R
     Ok(())
 }
 
-/// The Homebrew prefix that starts at `position`, if any.
+/// The entitlements a binary is signed with, as an XML plist, read *before* it
+/// is modified.
 ///
-/// A match has to sit on a path boundary: it must end at a `/` or at the end of
-/// the string, so `/usr/localhost` is not `/usr/local`, and it must not follow a
-/// `/`, so a doubled separator is not mistaken for the start of a prefix. What
-/// comes before is otherwise unrestricted, because prefixes legitimately appear
-/// mid-string in flags like `-L/opt/homebrew/lib` and in `PATH`-style lists.
-fn homebrew_prefix_at(bytes: &[u8], position: usize, new_prefix: &str) -> Option<&'static str> {
-    if position > 0 && bytes[position - 1] == b'/' {
-        return None;
-    }
-
-    let rest = &bytes[position..];
-    HOMEBREW_PREFIXES.iter().copied().find(|prefix| {
-        if *prefix == new_prefix || !rest.starts_with(prefix.as_bytes()) {
-            return false;
+/// `--preserve-metadata=entitlements` only carries over what is still in the
+/// file when `codesign` runs, and by then there may be nothing left:
+/// `install_name_tool` drops the original signature (replacing it with a bare
+/// ad-hoc one) as soon as it rewrites a load command. Reading the entitlements
+/// up front and handing them back explicitly is what keeps restricted
+/// entitlements such as `com.apple.security.virtualization` — without which
+/// lima's `limactl` cannot start a `vz` VM — alive across patching.
+fn read_entitlements(path: &Path) -> Option<Vec<u8>> {
+    let run = |xml: bool| {
+        let mut command = Command::new("codesign");
+        command.args(["-d", "--entitlements", "-"]);
+        if xml {
+            command.arg("--xml");
         }
+        command.arg(path).output().ok()
+    };
 
-        let tail = &rest[prefix.len()..];
-        if !(tail.is_empty() || tail[0] == b'/') {
-            return false;
-        }
+    // `--xml` is what asks for a plain plist; `codesign` versions that predate
+    // it fail the whole invocation, so the wrapped form is the fallback.
+    let output = run(true)
+        .filter(|o| o.status.success())
+        .or_else(|| run(false).filter(|o| o.status.success()))?;
 
-        *prefix != "/usr/local"
-            || HOMEBREW_SUBPATHS
-                .iter()
-                .any(|sub| tail.starts_with(sub.as_bytes()))
-    })
+    entitlements_plist(&output.stdout).map(String::into_bytes)
 }
 
-/// Rewrite every Homebrew prefix in `text` to `new_prefix`, or `None` when the
-/// string mentions none of them.
-///
-/// The scan runs once from left to right and never re-examines what it has
-/// emitted, so a new prefix that itself lives under an old one (say
-/// `/usr/local/zerobrew`) cannot be rewritten a second time.
-fn rewrite_homebrew_prefixes(text: &str, new_prefix: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let mut out = String::new();
-    let mut copied = 0;
-    let mut position = 0;
-
-    while position < bytes.len() {
-        match homebrew_prefix_at(bytes, position, new_prefix) {
-            Some(prefix) => {
-                out.push_str(&text[copied..position]);
-                out.push_str(new_prefix);
-                position += prefix.len();
-                copied = position;
-            }
-            None => position += 1,
-        }
-    }
-
-    if out.is_empty() {
-        return None;
-    }
-
-    out.push_str(&text[copied..]);
-    Some(out)
-}
-
-/// Ad-hoc re-sign a Mach-O file that we modified.
+/// Ad-hoc re-sign a Mach-O file that we modified, restoring `entitlements`.
 ///
 /// Any edit invalidates the existing signature, and macOS refuses to execute a
 /// binary whose signature does not match its contents (fatally so on Apple
 /// silicon), so a failure here is an error rather than a warning: the
 /// alternative is shipping a keg that dies with `Killed: 9` at first use.
-/// Metadata is preserved the way Homebrew does it, so entitlements, the
-/// hardened runtime and signing flags survive re-signing.
-fn codesign(path: &Path) -> Result<(), Error> {
+/// The hardened runtime, signing flags and requirements are preserved the way
+/// Homebrew does it; entitlements are passed back in explicitly when the caller
+/// captured them, because by this point they may already be gone from the file.
+fn codesign(path: &Path, entitlements: Option<&[u8]>) -> Result<(), Error> {
+    let mut args = vec!["--force".to_string(), "--sign".to_string(), "-".to_string()];
+
+    // `--entitlements` and `--preserve-metadata=entitlements` are mutually
+    // exclusive, and the plist has to outlive the command that reads it.
+    let plist = match entitlements {
+        Some(bytes) => {
+            let mut file = tempfile::Builder::new()
+                .prefix("zb-entitlements-")
+                .suffix(".plist")
+                .tempfile()
+                .map_err(Error::store("failed to create an entitlements file"))?;
+            file.write_all(bytes)
+                .and_then(|()| file.flush())
+                .map_err(Error::store("failed to write entitlements"))?;
+
+            args.push("--entitlements".to_string());
+            args.push(file.path().to_string_lossy().into_owned());
+            args.push("--preserve-metadata=requirements,flags,runtime".to_string());
+            Some(file)
+        }
+        None => {
+            args.push("--preserve-metadata=entitlements,requirements,flags,runtime".to_string());
+            None
+        }
+    };
+
+    args.push(path.to_string_lossy().into_owned());
+
     let output = Command::new("codesign")
-        .args([
-            "--force",
-            "--sign",
-            "-",
-            "--preserve-metadata=entitlements,requirements,flags,runtime",
-            &path.to_string_lossy(),
-        ])
+        .args(&args)
         .output()
         .map_err(Error::exec(&format!(
             "failed to run codesign for {}",
             path.display()
         )))?;
+
+    drop(plist);
 
     if !output.status.success() {
         return Err(Error::ExecutionError {
@@ -254,27 +237,28 @@ fn patch_macho_bytes(path: &Path, contents: &[u8], new_prefix: &str) -> Option<V
         rewrite_homebrew_prefixes(text, new_prefix)
     });
 
-    for skipped in &report.skipped {
+    // One warning per binary rather than one per string: a bottle that hits
+    // this hits it dozens of times, and a wall of identical lines is what made
+    // the old warning look like a failure even when it was harmless.
+    if let Some(diagnosis) = diagnose_skipped(&report.skipped, new_prefix) {
         warn!(
-            path = %path.display(),
-            old_path = %skipped,
-            new_prefix = %new_prefix,
-            "hardcoded path could not be rewritten to {new_prefix} (the new path \
-             is longer and there is no room to grow it in place). this package \
-             may not work correctly
-             tracking issue: https://github.com/lucasgelfond/zerobrew/issues/286
-             ",
+            "{}",
+            diagnosis.message(&path.display().to_string(), new_prefix)
         );
     }
 
+    // Paths outside the string tables — copies inside code, length-prefixed Go
+    // and Rust strings, debug info — are left alone deliberately: rewriting
+    // them is not safe here regardless of how long the prefix is. That is a
+    // fact about every Homebrew-built binary, not a problem with this install,
+    // so it is recorded for debugging rather than shown to the user.
     let unreachable = unreachable_paths(&patched, &regions, new_prefix);
     if unreachable > 0 {
-        warn!(
+        debug!(
             path = %path.display(),
             count = unreachable,
-            "binary keeps {unreachable} hardcoded Homebrew path(s) that live outside \
-             its string data and cannot be rewritten safely. this package may not \
-             work correctly"
+            "left {unreachable} Homebrew path(s) that live outside the binary's string \
+             storage untouched; rewriting those bytes could corrupt the image"
         );
     }
 
@@ -289,6 +273,9 @@ fn patch_macho_binary_strings(path: &Path, new_prefix: &str) -> Result<(), Error
     let Some(patched) = patch_macho_bytes(path, &contents, new_prefix) else {
         return Ok(());
     };
+
+    // Read while the original signature is still intact.
+    let entitlements = read_entitlements(path);
 
     // Write through a temporary file so a crash mid-write cannot leave a
     // half-rewritten binary behind, and keep it writable until codesign is done
@@ -310,7 +297,7 @@ fn patch_macho_binary_strings(path: &Path, new_prefix: &str) -> Result<(), Error
 
     fs::rename(&temp_path, path).map_err(Error::store("failed to replace patched binary"))?;
 
-    let signed = codesign(path);
+    let signed = codesign(path, entitlements.as_deref());
 
     // Restore the original mode even if signing failed, so the keg is never
     // left more permissive than the bottle intended.
@@ -586,44 +573,55 @@ pub fn patch_homebrew_placeholders(
             return;
         }
 
+        // Every edit is worked out before the first one is applied, so the
+        // entitlements can be read while the binary still carries the signature
+        // it was bottled with: `install_name_tool` replaces that signature with
+        // a bare ad-hoc one — entitlements and all — the moment it writes.
+        let changes = |flag: &str| -> Vec<(String, String)> {
+            otool(path, flag)
+                .into_iter()
+                .filter_map(|old| patch_path(&old).map(|new| (old, new)))
+                .collect()
+        };
+        // Library dependencies (-L), the install name ID (-D), and rpaths (-l).
+        let dylibs = changes("-L");
+        let ids = changes("-D");
+        let rpaths = changes("-l");
+
+        let entitlements = (!dylibs.is_empty() || !ids.is_empty() || !rpaths.is_empty())
+            .then(|| read_entitlements(path))
+            .flatten();
         let mut patched_any = false;
 
-        // Patch library dependencies (-L) and the install name ID (-D)
-        for old_path in otool(path, "-L") {
-            if let Some(new_path) = patch_path(&old_path) {
-                match install_name_tool(path, &["-change", &old_path, &new_path]) {
-                    Ok(()) => patched_any = true,
-                    Err(e) => failures.record(e),
-                }
+        for (old_path, new_path) in &dylibs {
+            match install_name_tool(path, &["-change", old_path, new_path]) {
+                Ok(()) => patched_any = true,
+                Err(e) => failures.record(e),
             }
         }
 
-        for old_id in otool(path, "-D") {
-            if let Some(new_id) = patch_path(&old_id) {
-                match install_name_tool(path, &["-id", &new_id]) {
-                    Ok(()) => patched_any = true,
-                    Err(e) => failures.record(e),
-                }
+        for (_, new_id) in &ids {
+            match install_name_tool(path, &["-id", new_id]) {
+                Ok(()) => patched_any = true,
+                Err(e) => failures.record(e),
             }
         }
 
         // Rpaths are only search hints, so a binary with a stale one still runs
         // as long as its dependencies are absolute: warn instead of failing.
-        for old_rpath in otool(path, "-l") {
-            if let Some(new_rpath) = patch_path(&old_rpath) {
-                match install_name_tool(path, &["-rpath", &old_rpath, &new_rpath]) {
-                    Ok(()) => patched_any = true,
-                    Err(e) => warn!(
-                        path = %path.display(),
-                        error = %e,
-                        "failed to rewrite rpath {old_rpath}"
-                    ),
-                }
+        for (old_rpath, new_rpath) in &rpaths {
+            match install_name_tool(path, &["-rpath", old_rpath, new_rpath]) {
+                Ok(()) => patched_any = true,
+                Err(e) => warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "failed to rewrite rpath {old_rpath}"
+                ),
             }
         }
 
         // Re-sign if we patched anything (patching invalidates code signature)
-        if patched_any && let Err(e) = codesign(path) {
+        if patched_any && let Err(e) = codesign(path, entitlements.as_deref()) {
             failures.record(e);
         }
 
@@ -688,6 +686,10 @@ pub fn codesign_and_strip_xattrs(keg_path: &Path) -> Result<(), Error> {
             return; // Already signed
         }
 
+        // Whatever entitlements the bottle carries have to be carried over by
+        // hand: an ad-hoc re-sign drops the ones already in the file.
+        let entitlements = read_entitlements(path);
+
         // Get permissions and make writable
         let metadata = match fs::metadata(path) {
             Ok(m) => m,
@@ -707,7 +709,7 @@ pub fn codesign_and_strip_xattrs(keg_path: &Path) -> Result<(), Error> {
 
         // An executable that will not pass Gatekeeper is a broken install, so a
         // signing failure here is reported rather than swallowed.
-        if let Err(e) = codesign(path) {
+        if let Err(e) = codesign(path, entitlements.as_deref()) {
             failures.record(e);
         }
 
@@ -825,39 +827,6 @@ mod tests {
         assert_eq!(
             fs::read(&script).unwrap(),
             b"#!/bin/sh\nexec /opt/homebrew/bin/foo\n"
-        );
-    }
-
-    #[test]
-    fn homebrew_prefixes_are_rewritten_on_path_boundaries_only() {
-        let rewrite = |s: &str| rewrite_homebrew_prefixes(s, NEW_PREFIX);
-
-        assert_eq!(
-            rewrite("/opt/homebrew/lib/libfoo.dylib").as_deref(),
-            Some("/opt/zb/lib/libfoo.dylib")
-        );
-        assert_eq!(
-            rewrite("-L/home/linuxbrew/.linuxbrew/lib -L/opt/homebrew/lib").as_deref(),
-            Some("-L/opt/zb/lib -L/opt/zb/lib")
-        );
-        // The longest prefix wins, and its replacement is not rewritten again.
-        assert_eq!(
-            rewrite("/usr/local/Homebrew/Library").as_deref(),
-            Some("/opt/zb/Library")
-        );
-        // A match that runs into a longer component is not a prefix at all.
-        assert_eq!(rewrite("/opt/homebrewery/lib"), None);
-        assert_eq!(rewrite("/usr/locale/share"), None);
-        // /usr/local is only Homebrew's when what follows says so.
-        assert_eq!(rewrite("/usr/local/lib/libz.dylib"), None);
-        assert_eq!(
-            rewrite("/usr/local/Cellar/git/2.0/bin/git").as_deref(),
-            Some("/opt/zb/Cellar/git/2.0/bin/git")
-        );
-        // Rewriting into a directory under an old prefix stays put after one pass.
-        assert_eq!(
-            rewrite_homebrew_prefixes("/usr/local/opt/git", "/usr/local/zb").as_deref(),
-            Some("/usr/local/zb/opt/git")
         );
     }
 
