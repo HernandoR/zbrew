@@ -22,7 +22,7 @@ webpki-roots = "1.0.7"
 flate2 = "1.1.8"
 tar = "0.4.44"
 xz2 = "0.1.7"
-zstd = "0.13.3"
+zstd = "0.14.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.40.0", features = ["bundled"] }
 futures = "0.3.31"
