@@ -1,5 +1,3 @@
-mod relocation;
-
 use std::fs;
 use std::io::{Read as _, Write as _};
 use std::os::unix::fs::PermissionsExt;
@@ -11,7 +9,7 @@ use tracing::{debug, warn};
 use zb_core::Error;
 
 use super::macho::{self, Region};
-use relocation::{
+use super::relocation::{
     HOMEBREW_PREFIXES, diagnose_skipped, entitlements_plist, homebrew_prefix_at,
     rewrite_homebrew_prefixes,
 };
