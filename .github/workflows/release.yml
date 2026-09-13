@@ -190,6 +190,46 @@ jobs:
           files: assets/*
           generate_release_notes: true
           draft: false
+          # GitHub appends the generated changelog after this, so the install
+          # guidance stays at the top where someone landing on the release page
+          # will actually read it.
+          #
+          # The quarantine note matters because these binaries are ad-hoc
+          # signed at best and are not notarized. curl does not set
+          # com.apple.quarantine, so install.sh and Homebrew are unaffected --
+          # only a browser download from this page trips Gatekeeper.
+          body: |
+            ## Install
+
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh | bash
+            ```
+
+            This is the recommended route. It picks the right binary for your
+            platform, and on Linux it selects the statically linked musl build
+            when your glibc is older than 2.35, so `zb` also runs somewhere like
+            Google Colab.
+
+            Or with Homebrew, from this fork's tap:
+
+            ```sh
+            brew install HernandoR/zerobrew/zerobrew
+            ```
+
+            ### Downloading a binary from this page
+
+            The macOS binaries below are not notarized. Installing through
+            `install.sh` or Homebrew is unaffected, because `curl` does not mark
+            downloads as quarantined. A browser does, so if you download from
+            this page directly, clear the flag before running it:
+
+            ```sh
+            chmod +x zb zbx
+            xattr -d com.apple.quarantine zb zbx 2>/dev/null || true
+            ```
+
+            Otherwise macOS refuses to launch it with "cannot be opened because
+            the developer cannot be verified".
           # A tag with a pre-release suffix (v0.3.3-rc.1) is published as a
           # pre-release, so `releases/latest` — which install.sh downloads
           # from — keeps pointing at the last stable release.
