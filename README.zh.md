@@ -7,9 +7,9 @@
   <strong>中文</strong>
 </p>
 
-[![Lint](https://github.com/lucasgelfond/zerobrew/actions/workflows/ci.yml/badge.svg)](https://github.com/lucasgelfond/zerobrew/actions/workflows/ci.yml)
-[![Test](https://github.com/lucasgelfond/zerobrew/actions/workflows/test.yml/badge.svg)](https://github.com/lucasgelfond/zerobrew/actions/workflows/test.yml)
-[![Release](https://img.shields.io/github/v/release/lucasgelfond/zerobrew?display_name=tag)](https://github.com/lucasgelfond/zerobrew/releases)
+[![Lint](https://github.com/HernandoR/zerobrew/actions/workflows/ci.yml/badge.svg)](https://github.com/HernandoR/zerobrew/actions/workflows/ci.yml)
+[![Test](https://github.com/HernandoR/zerobrew/actions/workflows/test.yml/badge.svg)](https://github.com/HernandoR/zerobrew/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/HernandoR/zerobrew?display_name=tag)](https://github.com/HernandoR/zerobrew/releases)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/ZaPYwm9zaw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE-MIT.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE-APACHE.md)
@@ -19,6 +19,13 @@
 <p><strong>zerobrew 为 macOS 和 Linux 上的 Homebrew 软件包带来了类似 uv 的架构。</strong></p>
 
 </div>
+
+> [!NOTE]
+> 本仓库是 [lucasgelfond/zerobrew](https://github.com/lucasgelfond/zerobrew) 的**维护分支（fork）**。
+> 原作者已将上游标记为不再维护。本分支的目标是让 zerobrew 持续可用：整理上游未关闭的 bug、
+> 合入上游未合并的修复，并保持依赖更新。规划见本仓库的 [milestones](https://github.com/HernandoR/zerobrew/milestones)，
+> 实时进度见 [项目看板](https://github.com/users/HernandoR/projects/3)，其中跟踪了全部上游未关闭的 bug、功能请求和未合并的上游 PR。
+> 安全问题请在本仓库提交私密的 [security advisory](https://github.com/HernandoR/zerobrew/security/advisories/new)。
 
 ## 安装 (Install)
 
@@ -32,6 +39,15 @@ curl -fsSL https://zerobrew.rs/install | bash
 
 ```bash
 brew install lucasgelfond/zerobrew/zerobrew
+```
+
+> 上述安装脚本与 Homebrew tap 目前分发的仍是**上游**最后一次发布的二进制。本分支的发布版本已列入 roadmap。
+> 现在要使用本分支，请从源码构建：
+
+```bash
+git clone https://github.com/HernandoR/zerobrew.git
+cd zerobrew
+just install            # 或：cargo install --path zb_cli --locked
 ```
 
 ## 更新 zerobrew (Update zerobrew)
@@ -100,14 +116,16 @@ zerobrew 处于实验阶段。我们建议将其与 Homebrew 并行运行，而�
 ## 项目状态 (Project status)
 
 <div align="center">
-  <a href="https://star-history.dera.page/#lucasgelfond/zerobrew&Date">
+  <a href="https://star-history.dera.page/#HernandoR/zerobrew&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=lucasgelfond/zerobrew&type=Date&theme=dark" />
-      <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=lucasgelfond/zerobrew&type=Date" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=HernandoR/zerobrew&type=Date&theme=dark" />
+      <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=HernandoR/zerobrew&type=Date" />
     </picture>
   </a>
 </div>
 
 - **状态：** 处于实验阶段，但对于许多常见的 Homebrew formulas 已经非常有用。
-- **反馈：** 如果遇到不兼容问题，请提出 issue 或 PR。
+- **反馈：** 如果遇到不兼容问题，请在[本分支提出 issue 或 PR](https://github.com/HernandoR/zerobrew/issues)。
+- **Roadmap：** [milestones](https://github.com/HernandoR/zerobrew/milestones) 与[项目看板](https://github.com/users/HernandoR/projects/3)。
+- **同步上游：** `upstream` 分支镜像 `lucasgelfond/zerobrew:main`。运行 `just upstream-sync` 刷新，`just upstream-cherry-pick <sha>` 将单个上游提交挑入 `main`；详见 [CONTRIBUTING.md](./CONTRIBUTING.md#syncing-with-upstream)。
 - **许可证：** 根据您的选择，在 [Apache 2.0](./LICENSE-APACHE.md) 或 [MIT](./LICENSE-MIT.md) 下获得双重许可。

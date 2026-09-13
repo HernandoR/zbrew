@@ -140,3 +140,36 @@ sudo chown -R "$(whoami)" "$(brew --prefix)"
 ## Questions?
 
 For further questions, open an issue on GitHub.
+
+## Syncing with upstream
+
+This repository is a maintained fork of
+[lucasgelfond/zerobrew](https://github.com/lucasgelfond/zerobrew). Upstream is
+mirrored on the `upstream` branch of this repository so that upstream commits can
+be reviewed and cherry-picked from the same remote.
+
+Branch layout:
+
+- `main` — the fork's development branch. Fork releases are cut from here.
+- `upstream` — a pristine mirror of `lucasgelfond/zerobrew:main`. Never commit
+  to it directly; only fast-forward it.
+
+Recipes (they add the `lucasgelfond` git remote on first use):
+
+```bash
+just upstream-sync              # fast-forward `upstream` to lucasgelfond/main and push to origin
+just upstream-diff              # list upstream commits missing from the current branch
+just upstream-cherry-pick <sha> # cherry-pick upstream commit(s) into the current branch
+```
+
+Adopting an unmerged upstream pull request:
+
+```bash
+gh pr checkout <number> -R lucasgelfond/zerobrew -b adopt/pr-<number>
+# rebase onto main, resolve conflicts, then open a PR against this fork's main
+```
+
+Every open upstream issue and adoptable upstream PR has a tracking issue in this
+repository (label `upstream-pr` for PRs), grouped into [milestones](https://github.com/HernandoR/zerobrew/milestones) and shown on the
+[project board](https://github.com/users/HernandoR/projects/3). Reference both the tracking issue and the upstream number in
+the commit message (for example `Upstream: lucasgelfond/zerobrew#393`) so the board stays traceable.

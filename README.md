@@ -7,9 +7,9 @@
   <a href="README.zh.md">中文</a>
 </p>
 
-[![Lint](https://github.com/lucasgelfond/zerobrew/actions/workflows/ci.yml/badge.svg)](https://github.com/lucasgelfond/zerobrew/actions/workflows/ci.yml)
-[![Test](https://github.com/lucasgelfond/zerobrew/actions/workflows/test.yml/badge.svg)](https://github.com/lucasgelfond/zerobrew/actions/workflows/test.yml)
-[![Release](https://img.shields.io/github/v/release/lucasgelfond/zerobrew?display_name=tag)](https://github.com/lucasgelfond/zerobrew/releases)
+[![Lint](https://github.com/HernandoR/zerobrew/actions/workflows/ci.yml/badge.svg)](https://github.com/HernandoR/zerobrew/actions/workflows/ci.yml)
+[![Test](https://github.com/HernandoR/zerobrew/actions/workflows/test.yml/badge.svg)](https://github.com/HernandoR/zerobrew/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/HernandoR/zerobrew?display_name=tag)](https://github.com/HernandoR/zerobrew/releases)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/ZaPYwm9zaw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE-MIT.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE-APACHE.md)
@@ -20,9 +20,14 @@
 
 </div>
 
-> [!WARNING] 
-> zerobrew is currently **unmaintained**.
-> Please contact lucas.gelfond@gmail.com or akrm@cachebag.sh for CVE's or other critical security issues
+> [!NOTE]
+> This repository is a **maintained fork** of [lucasgelfond/zerobrew](https://github.com/lucasgelfond/zerobrew),
+> which its original authors have marked as unmaintained. The goal of this fork is to keep zerobrew
+> working: triage the open upstream bugs, land the unmerged upstream fixes, and keep dependencies current.
+> The roadmap lives in the [milestones](https://github.com/HernandoR/zerobrew/milestones) of this repository and on the
+> [project board](https://github.com/users/HernandoR/projects/3), which tracks every open upstream bug, feature request and unmerged upstream PR.
+> Security issues: please open a private
+> [security advisory](https://github.com/HernandoR/zerobrew/security/advisories/new) on this repository.
 
 
 ## Install
@@ -38,6 +43,15 @@ Or via Homebrew:
 
 ```bash
 brew install lucasgelfond/zerobrew/zerobrew
+```
+
+> The installer and the Homebrew tap above currently ship the last **upstream** release
+> binaries. Fork releases are on the roadmap. To run this fork today, build from source:
+
+```bash
+git clone https://github.com/HernandoR/zerobrew.git
+cd zerobrew
+just install            # or: cargo install --path zb_cli --locked
 ```
 
 ## Update zerobrew
@@ -106,14 +120,16 @@ doing so.
 ## Project status
 
 <div align="center">
-  <a href="https://star-history.dera.page/#lucasgelfond/zerobrew&Date">
+  <a href="https://star-history.dera.page/#HernandoR/zerobrew&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=lucasgelfond/zerobrew&type=Date&theme=dark" />
-      <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=lucasgelfond/zerobrew&type=Date" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=HernandoR/zerobrew&type=Date&theme=dark" />
+      <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=HernandoR/zerobrew&type=Date" />
     </picture>
   </a>
 </div>
 
 - **Status:** Experimental, but already useful for many common Homebrew formulas.
-- **Feedback:** If you hit incompatibilities, please open an issue or PR.
+- **Feedback:** If you hit incompatibilities, please open an [issue or PR on this fork](https://github.com/HernandoR/zerobrew/issues).
+- **Roadmap:** [milestones](https://github.com/HernandoR/zerobrew/milestones) and the [project board](https://github.com/users/HernandoR/projects/3).
+- **Upstream sync:** the `upstream` branch mirrors `lucasgelfond/zerobrew:main`. Run `just upstream-sync` to refresh it and `just upstream-cherry-pick <sha>` to bring individual upstream commits into `main`; see [CONTRIBUTING.md](./CONTRIBUTING.md#syncing-with-upstream).
 - **License:** Dual-licensed under [Apache 2.0](./LICENSE-APACHE.md) OR [MIT](./LICENSE-MIT.md), at your choice.

@@ -1,6 +1,7 @@
 set export
 set dotenv-load
 set unstable
+set lists
 set script-interpreter := ['bash', '-euo', 'pipefail']
 
 ZEROBREW_ROOT := if env('ZEROBREW_ROOT', '') != '' {
@@ -704,3 +705,44 @@ bench *args:
     else
         output_result
     fi
+
+# ---------------------------------------------------------------------------
+# Fork maintenance: keep the `upstream` branch mirroring lucasgelfond/zerobrew
+# ---------------------------------------------------------------------------
+
+UPSTREAM_REMOTE := 'lucasgelfond'
+UPSTREAM_URL := 'https://github.com/lucasgelfond/zerobrew.git'
+
+[doc('Ensure the upstream remote exists and fetch it (with tags)')]
+[group('upstream')]
+upstream-fetch:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! git remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1; then
+        git remote add "$UPSTREAM_REMOTE" "$UPSTREAM_URL"
+    fi
+    git fetch --tags "$UPSTREAM_REMOTE"
+
+[doc('Fast-forward the local `upstream` branch to lucasgelfond/main and push it to origin')]
+[group('upstream')]
+upstream-sync: upstream-fetch
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if git show-ref --verify --quiet refs/heads/upstream; then
+        git fetch . "refs/remotes/$UPSTREAM_REMOTE/main:refs/heads/upstream" \
+            || { echo "error: local 'upstream' branch is not an ancestor of $UPSTREAM_REMOTE/main; refusing to rewrite it" >&2; exit 1; }
+    else
+        git branch --no-track upstream "$UPSTREAM_REMOTE/main"
+    fi
+    git push origin refs/heads/upstream:refs/heads/upstream
+    echo "upstream branch is now at $(git rev-parse --short refs/heads/upstream)"
+
+[doc('Show upstream commits that are not yet in the current branch')]
+[group('upstream')]
+upstream-diff: upstream-fetch
+    git log --oneline --no-merges HEAD..refs/heads/upstream
+
+[doc('Cherry-pick one or more upstream commits into the current branch (records -x origin)')]
+[group('upstream')]
+upstream-cherry-pick +shas:
+    git cherry-pick -x {{ shas }}
