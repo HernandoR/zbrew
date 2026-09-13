@@ -115,9 +115,21 @@ impl Cellar {
         // Copy the content to the cellar using best available strategy
         copy_dir_with_fallback(&src_path, &keg_path)?;
 
+        // A keg that could not be patched is not usable, and leaving it in place
+        // would make the next run mistake it for a finished install.
+        if let Err(e) = self.patch_keg(&keg_path, name, version) {
+            let _ = fs::remove_dir_all(&keg_path);
+            return Err(e);
+        }
+
+        Ok(keg_path)
+    }
+
+    /// Rewrite the build-time paths baked into a freshly copied keg.
+    fn patch_keg(&self, keg_path: &Path, name: &str, version: &str) -> Result<(), Error> {
         // Patch Homebrew placeholders in Mach-O binaries
         #[cfg(target_os = "macos")]
-        patch_homebrew_placeholders(&keg_path, &self.cellar_dir, name, version)?;
+        patch_homebrew_placeholders(keg_path, &self.cellar_dir, name, version)?;
 
         // Patch Homebrew placeholders in ELF binaries
         #[cfg(target_os = "linux")]
@@ -132,14 +144,14 @@ impl Cellar {
                         self.cellar_dir.display()
                     ),
                 })?;
-            patch_placeholders(&keg_path, prefix, name, version)?;
+            patch_placeholders(keg_path, prefix, name, version)?;
         }
 
         // Strip quarantine xattrs and ad-hoc sign Mach-O binaries
         #[cfg(target_os = "macos")]
-        codesign_and_strip_xattrs(&keg_path)?;
+        codesign_and_strip_xattrs(keg_path)?;
 
-        Ok(keg_path)
+        Ok(())
     }
 
     pub fn remove_keg(&self, name: &str, version: &str) -> Result<(), Error> {

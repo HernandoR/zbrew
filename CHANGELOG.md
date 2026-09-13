@@ -10,8 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Bump MSRV to 1.96, required to build the latest `cargo-audit` in CI ([#393](https://github.com/lucasgelfond/zerobrew/pull/393))
 - Refresh `Cargo.lock` for audit findings: `crossbeam-epoch` (RUSTSEC-2026-0204), `quinn-proto` (RUSTSEC-2026-0185), and `anyhow` (RUSTSEC-2026-0190) ([#393](https://github.com/lucasgelfond/zerobrew/pull/393))
+- Refresh `Cargo.lock` for audit findings: `h2` 0.4.19 (RUSTSEC-2026-0258) and `chacha20` 0.10.2, replacing a yanked release ([#64](https://github.com/HernandoR/zerobrew/pull/64))
+- The macOS CI job is opt-in: pull requests run the test suite on Linux, and the macOS matrix entry is added only when the pull request carries the `ci-macos` label, when the workflow is dispatched with `macos`, or when the ref is a `release-*` branch or a release tag ([#64](https://github.com/HernandoR/zerobrew/pull/64))
+- Ad-hoc re-signing now passes `--preserve-metadata=entitlements,requirements,flags,runtime`, as Homebrew does, so entitlements and the hardened runtime survive patching ([#1](https://github.com/HernandoR/zerobrew/issues/1))
+- `/usr/local` is only rewritten when what follows it is Homebrew's (`/Cellar/`, `/Caskroom/`, `/Homebrew/`, `/opt/`), leaving genuine system paths such as `/usr/local/lib` alone ([#1](https://github.com/HernandoR/zerobrew/issues/1))
+- Walking a keg for Mach-O files reads four magic bytes per file instead of the whole file ([#1](https://github.com/HernandoR/zerobrew/issues/1))
 
 ### Fixed
+- Mach-O patching validates where it writes: path strings are rewritten only inside the ranges the Mach-O structure declares as C string storage — load command strings and `S_CSTRING_LITERALS` sections — so a path that happens to appear in code, in a pointer table or in length-prefixed Rust/Go string data is no longer silently corrupted ([#1](https://github.com/HernandoR/zerobrew/issues/1))
+- A shortened path keeps its tail: replacements rewrite the whole string instead of splicing NULs in behind the new prefix, which used to truncate `/opt/homebrew/opt/git/libexec/git-core` down to the prefix alone ([#1](https://github.com/HernandoR/zerobrew/issues/1))
+- Failing to re-sign a patched binary now fails the install instead of only logging, so a keg cannot ship binaries that Gatekeeper kills at first use; `install_name_tool` and `otool` exit statuses are checked as well, where before only process startup was ([#1](https://github.com/HernandoR/zerobrew/issues/1))
+- Load command paths that are too long to patch in place are rewritten with `install_name_tool`, which resizes them properly, and `LC_RPATH` entries are now patched too ([#286](https://github.com/lucasgelfond/zerobrew/issues/286))
+- A keg whose patching failed is removed rather than left behind, where the next run would have mistaken it for a finished install ([#1](https://github.com/HernandoR/zerobrew/issues/1))
 - Relink on upgrade/reinstall: symlinks owned by another version of the same formula — including dangling links left behind by removed kegs — are now replaced during linking instead of failing the link step as conflicts with the formula itself, which left `bin`/`opt` pointing at the old version while the DB reported the new one ([#393](https://github.com/lucasgelfond/zerobrew/pull/393))
 
 ## [0.3.2] - 2026-06-11

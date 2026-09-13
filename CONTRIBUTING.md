@@ -50,6 +50,12 @@ out in the Discord to give us a heads up or open an issue first to discuss your 
 > These will run in CI but it's best you clean up your code _before_ opening a PR to ensure a quick 
 > turnaround!
 
+> [!IMPORTANT]
+> CI tests every pull request on Linux. macOS runners bill at ten times the Linux rate, so the
+> macOS job is opt-in: add the `ci-macos` label to the pull request to approve it. It always runs
+> on `release-*` branches and release tags. Please label anything that touches macOS-specific
+> code — Mach-O patching, codesigning, cask installation — since Linux CI does not compile it.
+
 ### Using Just
 
 This project includes a `Justfile`, Install [just](https://github.com/casey/just) and use these commands instead of `cargo` (for ease of development):
