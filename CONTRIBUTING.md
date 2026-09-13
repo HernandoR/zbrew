@@ -147,6 +147,36 @@ sudo chown -R "$(whoami)" "$(brew --prefix)"
 
 For further questions, open an issue on GitHub.
 
+## Releases and the Homebrew tap
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds every
+target, publishes the GitHub release, and then regenerates the formula in the
+[`HernandoR/homebrew-zerobrew`](https://github.com/HernandoR/homebrew-zerobrew)
+tap.
+
+The tap has to be a separate repository because `brew tap <user>/<repo>`
+resolves only to `github.com/<user>/homebrew-<repo>`. Keeping the two in sync
+by hand is what stranded the upstream tap five releases behind (#16, #17), so
+`.github/scripts/generate_formula.py` writes the formula from the release's
+`SHA256SUMS` and the workflow pushes it.
+
+On Linux the generator prefers the statically linked `*-musl` assets, which
+have no glibc floor (#10), and falls back to the glibc assets when a release
+does not carry musl builds.
+
+This needs one repository secret:
+
+| Secret | Value |
+| --- | --- |
+| `TAP_GITHUB_TOKEN` | A fine-grained PAT scoped to `HernandoR/homebrew-zerobrew` with **Contents: read and write**, and no other permission or repository. |
+
+`GITHUB_TOKEN` cannot be used: it is scoped to this repository and cannot push
+to the tap. When the secret is absent the release still succeeds and the job
+logs a warning, so the tap can be updated by hand.
+
+To change the formula, edit the generator — the file in the tap is overwritten
+on every release.
+
 ## Syncing with upstream
 
 This repository is a maintained fork of
