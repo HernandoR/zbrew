@@ -9,8 +9,8 @@ We strongly recommend keeping your zerobrew dependencies up to date.
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-If you discover a security vulnerability in nmrs or any of the related crates, please report it privately by emailing
-**lucas.gelfondATgmail.com**.
+If you discover a security vulnerability in zerobrew or any of the related crates, please report it privately using
+[GitHub's private security advisory feature](https://github.com/HernandoR/zerobrew/security/advisories/new) on this repository.
 
 Please include the following information in your report:
 
@@ -45,18 +45,7 @@ For the CLI specifically:
 
 ## Response Timeline
 
-We are committed to responding to security reports promptly:
-
-- **Acknowledgment**: We will acknowledge receipt of your vulnerability report within
-  **24 hours**
-- **Initial assessment**: We will provide an initial assessment of the report within
-  **5 business days**
-- **Regular updates**: We will provide progress updates at least every **7 days** until
-  resolution
-- **Resolution**: We aim to provide a fix or mitigation within **30 days** for critical
-  vulnerabilities
-
-Response times may vary based on the complexity of the issue and availability of maintainers.
+This is a volunteer-maintained fork. We will triage security reports and work on fixes as soon as the maintainer can get to them. There is no guaranteed response time, but we will make our best effort to address valid security concerns.
 
 ## Disclosure Policy
 
@@ -77,7 +66,7 @@ We request that you:
 Published security advisories will be available through:
 
 - GitHub Security Advisories on the
-  [zerobrew repository](https://github.com/lucasgelfond/zerobrew/security/advisories)
+  [zerobrew repository](https://github.com/HernandoR/zerobrew/security/advisories)
 - [RustSec Advisory Database](https://rustsec.org/)
 - Release notes and changelog entries
 
