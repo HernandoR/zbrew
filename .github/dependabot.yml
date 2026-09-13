@@ -1,13 +1,17 @@
 version: 2
 updates:
+  # One cargo workspace, one root lockfile, so a single `/` entry covers
+  # zb_cli, zb_core and zb_io.
   - package-ecosystem: cargo
     directory: "/"
     schedule:
       interval: weekly
     groups:
-      production-dependencies:
-        dependency-types:
-          - production
+      # Minor and patch bumps arrive as one pull request per week. Major bumps
+      # stay ungrouped so each one gets reviewed on its own.
+      cargo-minor-and-patch:
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch
@@ -19,5 +23,9 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     commit-message:
       prefix: "chore(ci)"
