@@ -30,28 +30,93 @@ jobs:
     outputs:
       include: ${{ steps.select.outputs.include }}
     steps:
+      - uses: actions/checkout@v7
+
+      - name: detect macOS-specific changes
+        id: detect
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # Linux CI does not compile the macOS-gated code, so a pull request
+          # that touches it is either checked on a macOS runner or not checked
+          # at all. Leaving that to whoever remembers the `ci-macos` label does
+          # not work: the label was missed on the change that fixed #11 and on
+          # the one before it.
+          #
+          # A file counts two ways, because neither test alone is sufficient:
+          #
+          #   by path     macos.rs and macho.rs are macOS code from top to
+          #               bottom, gated at the module level in patch/mod.rs, so
+          #               they carry no `target_os` attribute of their own and
+          #               a content match misses them entirely.
+          #
+          #   by content  files such as cellar/materialize.rs are portable apart
+          #               from a `cfg(target_os = "macos")` block inside them,
+          #               and no path pattern would pick those out.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" \
+            --jq '.[].filename' > changed.txt
+
+          echo "Changed files:"
+          sed 's/^/  /' changed.txt
+
+          relevant=false
+          while IFS= read -r file; do
+            case "$file" in
+              .github/workflows/test.yml|*macos*|*macho*|*darwin*|*cask*)
+                echo "macOS-relevant by path: $file"
+                relevant=true
+                ;;
+              *.rs)
+                if [ -f "$file" ] && grep -q 'target_os = "macos"' "$file"; then
+                  echo "macOS-relevant by content: $file"
+                  relevant=true
+                fi
+                ;;
+            esac
+            if [ "$relevant" = true ]; then
+              break
+            fi
+          done < changed.txt
+
+          echo "macos=$relevant" >> "$GITHUB_OUTPUT"
+
       - name: select targets
         id: select
         env:
-          # macOS runners bill at ten times the Linux rate, so that job is
-          # opt-in: approve it on a pull request with the `ci-macos` label, ask
-          # for it when dispatching the workflow, or push a release branch or
-          # tag, where the full matrix always runs.
+          # The macOS job is not run on every pull request: the runners are free
+          # for this public repository, but the concurrency allowance for macOS
+          # is small, so running it on changes that cannot affect it would only
+          # queue up everyone else.
+          #
+          # It runs when the change actually touches macOS code (detected
+          # above), when a release branch or tag is pushed, when the workflow is
+          # dispatched with the macOS input, or when a human overrides all of
+          # that with the `ci-macos` label.
           RUN_MACOS: >-
             ${{ startsWith(github.ref, 'refs/tags/')
             || startsWith(github.ref_name, 'release-')
             || startsWith(github.base_ref, 'release-')
             || contains(github.event.pull_request.labels.*.name, 'ci-macos')
+            || steps.detect.outputs.macos == 'true'
             || inputs.macos }}
+          DETECTED: ${{ steps.detect.outputs.macos }}
         run: |
           linux='{"os":"ubuntu-latest","name":"linux","rust":"1.96"}'
           macos='{"os":"macos-latest","name":"macos-arm64","rust":"1.96"}'
           if [ "$RUN_MACOS" = "true" ]; then
             echo "include=[$linux,$macos]" >> "$GITHUB_OUTPUT"
-            echo 'Running linux and macos-arm64.' >> "$GITHUB_STEP_SUMMARY"
+            if [ "$DETECTED" = "true" ]; then
+              echo 'Running linux and macos-arm64: this change touches macOS-specific code.' >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo 'Running linux and macos-arm64.' >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
             echo "include=[$linux]" >> "$GITHUB_OUTPUT"
-            echo 'Running linux only. Add the `ci-macos` label to this pull request to run the macOS job.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Running linux only: nothing in this change reaches macOS-specific code. Add the `ci-macos` label to run the macOS job anyway.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
   test:
