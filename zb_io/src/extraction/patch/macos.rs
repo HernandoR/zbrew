@@ -10,7 +10,7 @@ use zb_core::Error;
 
 use super::macho::{self, Region};
 use super::relocation::{
-    HOMEBREW_PREFIXES, diagnose_skipped, entitlements_plist, homebrew_prefix_at,
+    HOMEBREW_PREFIXES, diagnose_skipped, entitlements_plist, homebrew_prefix_at, in_executable_dir,
     rewrite_homebrew_prefixes,
 };
 
@@ -180,6 +180,22 @@ fn codesign(path: &Path, entitlements: Option<&[u8]>) -> Result<(), Error> {
                 String::from_utf8_lossy(&output.stderr).trim()
             ),
         });
+    }
+
+    // Losing an entitlement is silent: the binary still runs, and only fails
+    // much later when it asks the kernel for a capability it no longer has.
+    // That is exactly how the limactl regression reached users, so say so here
+    // instead of leaving it to be discovered by a failing `colima start`.
+    //
+    // Deliberately a warning, not an error. codesign is free to re-serialise
+    // the plist, so an exact comparison is not something we can rely on, and a
+    // false positive here would turn a working install into a failed one.
+    if entitlements.is_some() && read_entitlements(path).is_none() {
+        warn!(
+            path = %path.display(),
+            "re-signing dropped this binary's entitlements; capabilities such as \
+             com.apple.security.virtualization will be unavailable"
+        );
     }
 
     Ok(())
@@ -652,15 +668,30 @@ pub fn codesign_and_strip_xattrs(keg_path: &Path) -> Result<(), Error> {
         .stderr(std::process::Stdio::null())
         .output();
 
-    // Find executables in bin/ directories only (where signing matters)
-    // Skip dylibs and other Mach-O files - they inherit signing from their loader
+    // Directly executed binaries have to carry their own valid signature.
+    // Libraries are left alone: they are validated as part of the image that
+    // loads them, and re-signing every dylib in a large keg would cost far more
+    // than it buys.
+    //
+    // `libexec` counts, not just `bin`. lima 2.x ships its
+    // Virtualization.framework driver as a separate executable at
+    // `libexec/lima/lima-driver-vz`, signed with the
+    // `com.apple.security.virtualization` entitlement; when it was skipped here
+    // it could be left unsigned, and colima's `--vm-type=vz` then fails.
     let bin_files: Vec<PathBuf> = walkdir::WalkDir::new(keg_path)
         .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| {
             let path = e.path();
-            path.is_file() && path.to_string_lossy().contains("/bin/")
+            if !path.is_file() {
+                return false;
+            }
+            // Matched against the keg-relative path, so that a prefix which
+            // happens to contain `bin` does not pull in the whole keg.
+            path.strip_prefix(keg_path)
+                .map(in_executable_dir)
+                .unwrap_or(false)
         })
         .map(|e| e.path().to_path_buf())
         .collect();
@@ -892,6 +923,122 @@ Load command 14
             Command::new(&binary).status().unwrap().success(),
             "patched binary must still run"
         );
+    }
+
+    /// The regression test for #11. lima's own Makefile ad-hoc signs limactl
+    /// with `vz.entitlements`, so the entitlement arrives inside the bottle.
+    /// Rewriting the binary invalidates that signature, and before the
+    /// entitlements were captured up front the re-sign produced a binary with
+    /// none at all -- which is why colima's `--vm-type=vz` stopped working.
+    #[test]
+    fn patching_preserves_entitlements() {
+        let tmp = TempDir::new().unwrap();
+        let literal = "/opt/homebrew/opt/git/libexec/git-core";
+        let Some(binary) = compile_fixture(tmp.path(), literal) else {
+            eprintln!("skipping: no C compiler available to build a real Mach-O fixture");
+            return;
+        };
+
+        let plist = tmp.path().join("vz.entitlements");
+        fs::write(
+            &plist,
+            concat!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+                "<plist version=\"1.0\"><dict>",
+                "<key>com.apple.security.virtualization</key><true/>",
+                "</dict></plist>\n",
+            ),
+        )
+        .unwrap();
+
+        // Sign it the way lima's Makefile does.
+        let signed = Command::new("codesign")
+            .arg("-f")
+            .arg("--entitlements")
+            .arg(&plist)
+            .args(["-s", "-"])
+            .arg(&binary)
+            .output()
+            .unwrap();
+        assert!(
+            signed.status.success(),
+            "fixture should sign: {}",
+            String::from_utf8_lossy(&signed.stderr)
+        );
+
+        let before = read_entitlements(&binary).expect("fixture must start with entitlements");
+        assert!(
+            String::from_utf8_lossy(&before).contains("com.apple.security.virtualization"),
+            "test setup is wrong if the entitlement is not there to begin with"
+        );
+
+        patch_macho_binary_strings(&binary, NEW_PREFIX).expect("patching should succeed");
+
+        let after = read_entitlements(&binary)
+            .expect("patching must not leave the binary with no entitlements");
+        assert!(
+            String::from_utf8_lossy(&after).contains("com.apple.security.virtualization"),
+            "the virtualization entitlement must survive patching, got: {}",
+            String::from_utf8_lossy(&after)
+        );
+    }
+
+    /// lima 2.x runs Virtualization.framework from a separate executable at
+    /// `libexec/lima/lima-driver-vz`. It is spawned as its own process, so it
+    /// is validated on its own signature and has to be re-signed like anything
+    /// in `bin`. Selecting only paths containing `/bin/` skipped it.
+    #[test]
+    fn libexec_helpers_are_signed_too() {
+        let tmp = TempDir::new().unwrap();
+        let keg = tmp.path().join("Cellar/lima/2.2.0");
+        let bin_dir = keg.join("bin");
+        let libexec_dir = keg.join("libexec/lima");
+        let lib_dir = keg.join("lib");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::create_dir_all(&libexec_dir).unwrap();
+        fs::create_dir_all(&lib_dir).unwrap();
+
+        let literal = "/opt/homebrew/opt/lima/share";
+        let Some(src) = compile_fixture(tmp.path(), literal) else {
+            eprintln!("skipping: no C compiler available to build a real Mach-O fixture");
+            return;
+        };
+
+        let limactl = bin_dir.join("limactl");
+        let driver = libexec_dir.join("lima-driver-vz");
+        fs::copy(&src, &limactl).unwrap();
+        fs::copy(&src, &driver).unwrap();
+
+        // Strip the signatures so both need re-signing, which is the state a
+        // patched binary is left in.
+        for path in [&limactl, &driver] {
+            let stripped = Command::new("codesign")
+                .args(["--remove-signature"])
+                .arg(path)
+                .output()
+                .unwrap();
+            assert!(
+                stripped.status.success(),
+                "could not unsign fixture: {}",
+                String::from_utf8_lossy(&stripped.stderr)
+            );
+        }
+
+        codesign_and_strip_xattrs(&keg).expect("signing the keg should succeed");
+
+        for path in [&limactl, &driver] {
+            let verified = Command::new("codesign")
+                .arg("-v")
+                .arg(path)
+                .output()
+                .unwrap();
+            assert!(
+                verified.status.success(),
+                "{} must end up signed: {}",
+                path.display(),
+                String::from_utf8_lossy(&verified.stderr)
+            );
+        }
     }
 
     #[test]
