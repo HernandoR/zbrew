@@ -146,7 +146,6 @@ impl Installer {
         } else if link && item.formula.is_keg_only() {
             let reason = match &item.formula.keg_only {
                 zb_core::KegOnly::Reason(s) => s.clone(),
-                _ if item.formula.name.contains('@') => "versioned formula".to_string(),
                 _ => "keg-only formula".to_string(),
             };
             report(InstallProgress::LinkSkipped {

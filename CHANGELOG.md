@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Load command paths that are too long to patch in place are rewritten with `install_name_tool`, which resizes them properly, and `LC_RPATH` entries are now patched too ([#286](https://github.com/lucasgelfond/zerobrew/issues/286))
 - A keg whose patching failed is removed rather than left behind, where the next run would have mistaken it for a finished install ([#1](https://github.com/HernandoR/zerobrew/issues/1))
 - Relink on upgrade/reinstall: symlinks owned by another version of the same formula — including dangling links left behind by removed kegs — are now replaced during linking instead of failing the link step as conflicts with the formula itself, which left `bin`/`opt` pointing at the old version while the DB reported the new one ([#393](https://github.com/lucasgelfond/zerobrew/pull/393))
+- Versioned formulae are no longer treated as keg-only just because their name contains `@`: keg-only status is read from the formula's own `keg_only` field, as Homebrew defines it, so `gcc@13`, `python@3.12` and other versioned-but-linkable formulae have their binaries linked into the prefix again instead of staying hidden in the Cellar ([#19](https://github.com/HernandoR/zerobrew/issues/19), [#403](https://github.com/lucasgelfond/zerobrew/pull/403))
+- Skipping the link step reports the formula's declared keg-only reason instead of claiming "versioned formula", which is no longer a reason zerobrew keeps a keg unlinked ([#19](https://github.com/HernandoR/zerobrew/issues/19))
 
 ## [0.3.2] - 2026-06-11
 
