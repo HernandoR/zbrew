@@ -212,7 +212,7 @@ pub async fn execute_formula_plan(
 
     {
         let bars = bars.lock().unwrap();
-        for (_, pb) in bars.iter() {
+        for pb in bars.values() {
             if !pb.is_finished() {
                 pb.finish();
             }
