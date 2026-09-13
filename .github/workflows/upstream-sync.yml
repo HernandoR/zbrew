@@ -1,0 +1,108 @@
+name: upstream sync
+
+# Keeps the `upstream` branch mirroring lucasgelfond/zerobrew and reports any
+# upstream commits that have not been adopted here yet, so late upstream
+# activity on the unmaintained original is noticed instead of silently
+# accumulating. The heavy lifting lives in the Justfile (`just upstream-sync`,
+# `just upstream-diff`) so the scheduled run and a local run stay identical.
+
+on:
+  schedule:
+    # Weekly, Monday 02:00 UTC — an hour after the Homebrew compatibility run
+    # so the two do not contend for runners.
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: sync and report
+    runs-on: ubuntu-latest
+    if: github.repository == 'HernandoR/zerobrew'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `just upstream-diff` lists commits in `upstream` that are not
+          # reachable from HEAD, so the full history is required.
+          fetch-depth: 0
+
+      - name: install just
+        uses: extractions/setup-just@v3
+
+      - name: sync the upstream branch
+        run: just upstream-sync
+
+      - name: collect unadopted upstream commits
+        id: diff
+        run: |
+          set -euo pipefail
+          just upstream-diff > upstream-diff.txt
+          count=$(wc -l < upstream-diff.txt | tr -d ' ')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Upstream commits not yet in \`main\`: $count"
+            echo
+            if [ "$count" -gt 0 ]; then
+              echo '```'
+              cat upstream-diff.txt
+              echo '```'
+            else
+              echo 'Nothing new upstream.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: open or update the triage issue
+        if: steps.diff.outputs.count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const diff = fs.readFileSync('upstream-diff.txt', 'utf8').trim();
+            const count = '${{ steps.diff.outputs.count }}';
+            const run = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            const title = 'Upstream triage: unadopted commits from lucasgelfond/zerobrew';
+            const body = [
+              `${count} upstream commit(s) are not yet in \`main\`.`,
+              '',
+              '```',
+              diff,
+              '```',
+              '',
+              'Adopt one with `just upstream-cherry-pick <sha>`, or note here why it is being skipped.',
+              '',
+              `Workflow run: ${run}`,
+            ].join('\n');
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'upstream-triage',
+              state: 'open',
+            });
+
+            if (existing.data.length > 0) {
+              const issue = existing.data[0];
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body,
+              });
+              core.info(`Commented on existing issue ${issue.html_url}`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['upstream-triage'],
+              });
+              core.info(`Opened ${created.data.html_url}`);
+            }
