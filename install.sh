@@ -55,7 +55,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ZEROBREW_REPO="https://github.com/lucasgelfond/zerobrew.git"
+ZEROBREW_REPO="https://github.com/HernandoR/zerobrew.git"
 : "${ZEROBREW_DIR:=$HOME/.zerobrew}"
 : "${ZEROBREW_BIN:=$HOME/.local/bin}"
 ORIGINAL_PATH="$PATH"
@@ -290,7 +290,7 @@ download_release_binary() {
     local output_name="$2"
     local required="${3:-true}"
     local downloaded_path="$DOWNLOAD_TEMP_DIR/${output_name}"
-    local download_url="https://github.com/lucasgelfond/zerobrew/releases/latest/download/${asset_name}"
+    local download_url="https://github.com/HernandoR/zerobrew/releases/latest/download/${asset_name}"
 
     (
         curl -fsL --retry 3 --retry-delay 1 --connect-timeout 10 \

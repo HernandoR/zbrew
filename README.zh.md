@@ -30,19 +30,21 @@
 ## 安装 (Install)
 
 ```bash
-curl -fsSL https://zerobrew.rs/install | bash
+curl -fsSL https://raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh | bash
 ```
 
 安装程序会更新你的 shell 配置。完成后，重启终端，或运行它打印的 `source` 命令。
 
+> `https://zerobrew.rs/install` 提供的仍是**上游**的安装脚本，该域名不在本分支控制之下。
+> 安装本分支请使用上面的地址。
+
 或通过 Homebrew 安装：
 
 ```bash
-brew install lucasgelfond/zerobrew/zerobrew
+brew install HernandoR/zerobrew/zerobrew
 ```
 
-> 上述安装脚本与 Homebrew tap 目前分发的仍是**上游**最后一次发布的二进制。本分支的发布版本已列入 roadmap。
-> 现在要使用本分支，请从源码构建：
+或从源码构建：
 
 ```bash
 git clone https://github.com/HernandoR/zerobrew.git
@@ -50,12 +52,15 @@ cd zerobrew
 just install            # 或：cargo install --path zb_cli --locked
 ```
 
+> 在本分支发布正式版本之前，安装脚本找不到预编译的二进制，会回退到源码构建：
+> 这需要 Rust 工具链，并且要花上几分钟。
+
 ## 更新 zerobrew (Update zerobrew)
 
 如果使用独立安装脚本，重新运行：
 
 ```bash
-curl -fsSL https://zerobrew.rs/install | bash
+curl -fsSL https://raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh | bash
 zb --version
 ```
 
