@@ -72,6 +72,7 @@ pub struct PlanFailure {
     pub error: Error,
 }
 
+#[derive(Debug)]
 pub struct ExecuteResult {
     pub installed: usize,
 }
@@ -394,6 +395,36 @@ mod test_support {
 
         let tar_data = builder.into_inner().unwrap();
 
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&tar_data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    pub fn create_bottle_tarball_with_entries(
+        formula_name: &str,
+        version: &str,
+        entries: &[&str],
+    ) -> Vec<u8> {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+        use tar::Builder;
+
+        let mut builder = Builder::new(Vec::new());
+
+        for rel_path in entries {
+            let content = format!("#!/bin/sh\necho {formula_name} {rel_path}");
+            let mut header = tar::Header::new_gnu();
+            header
+                .set_path(format!("{formula_name}/{version}/{rel_path}"))
+                .unwrap();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append(&header, content.as_bytes()).unwrap();
+        }
+
+        let tar_data = builder.into_inner().unwrap();
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(&tar_data).unwrap();
         encoder.finish().unwrap()
@@ -1151,6 +1182,131 @@ end
         assert!(installer.is_installed("retrypkg"));
         assert!(root.join("cellar/retrypkg/1.0.0").exists());
         assert!(prefix.join("bin/retrypkg").exists());
+    }
+
+    /// Regression for #6 (upstream lucasgelfond/zerobrew#188): a formula whose
+    /// links conflict with an already-installed formula used to be left
+    /// half-linked *and* unregistered — invisible to `zb list`, impossible to
+    /// uninstall, and leaving hundreds of orphaned symlinks behind. The keg
+    /// must be registered before linking, and the failed link must leave no
+    /// symlinks of its own while keeping the other formula's links intact.
+    #[tokio::test]
+    async fn link_conflict_keeps_keg_registered_and_leaves_no_orphans() {
+        let mock_server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let tag = get_test_bottle_tag();
+
+        let first = create_bottle_tarball_with_entries("firstpkg", "1.0.0", &["bin/shared"]);
+        let first_sha = sha256_hex(&first);
+        // `secondpkg` collides on bin/shared but also brings links of its own,
+        // which must not survive the failed link step.
+        let second = create_bottle_tarball_with_entries(
+            "secondpkg",
+            "1.0.0",
+            &[
+                "bin/aaa-first",
+                "bin/shared",
+                "bin/zzz-last",
+                "lib/libsecond.a",
+            ],
+        );
+        let second_sha = sha256_hex(&second);
+
+        for (name, sha) in [("firstpkg", &first_sha), ("secondpkg", &second_sha)] {
+            let formula_json = format!(
+                r#"{{
+                    "name": "{name}",
+                    "versions": {{ "stable": "1.0.0" }},
+                    "dependencies": [],
+                    "bottle": {{
+                        "stable": {{
+                            "files": {{
+                                "{tag}": {{
+                                    "url": "{uri}/bottles/{name}-1.0.0.{tag}.bottle.tar.gz",
+                                    "sha256": "{sha}"
+                                }}
+                            }}
+                        }}
+                    }}
+                }}"#,
+                uri = mock_server.uri()
+            );
+            Mock::given(method("GET"))
+                .and(path(format!("/formula/{name}.json")))
+                .respond_with(ResponseTemplate::new(200).set_body_string(&formula_json))
+                .mount(&mock_server)
+                .await;
+        }
+
+        for (name, body) in [("firstpkg", first), ("secondpkg", second)] {
+            Mock::given(method("GET"))
+                .and(path(format!("/bottles/{name}-1.0.0.{tag}.bottle.tar.gz")))
+                .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+                .mount(&mock_server)
+                .await;
+        }
+
+        let root = tmp.path().join("zerobrew");
+        let prefix = tmp.path().join("homebrew");
+        fs::create_dir_all(root.join("db")).unwrap();
+
+        let api_client =
+            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
+        let mut installer = Installer::new(
+            api_client,
+            BlobCache::new(&root.join("cache")).unwrap(),
+            Store::new(&root).unwrap(),
+            Cellar::new(&root).unwrap(),
+            Linker::new(&prefix).unwrap(),
+            Database::open(&root.join("db/zb.sqlite3")).unwrap(),
+            prefix.clone(),
+            root.join("locks"),
+        );
+
+        installer
+            .install(&["firstpkg".to_string()], true)
+            .await
+            .unwrap();
+        assert!(prefix.join("bin/shared").exists());
+
+        let err = installer
+            .install(&["secondpkg".to_string()], true)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, zb_core::Error::LinkConflict { .. }),
+            "expected a link conflict, got {err:?}"
+        );
+
+        // The keg is installed and known to the database, so it can be removed.
+        assert!(root.join("cellar/secondpkg/1.0.0").exists());
+        assert!(
+            installer.is_installed("secondpkg"),
+            "a link failure must not leave the keg unregistered and unremovable"
+        );
+
+        // All-or-none: no symlink of the failed formula survives...
+        for orphan in ["bin/aaa-first", "bin/zzz-last", "lib/libsecond.a"] {
+            assert!(
+                !prefix.join(orphan).exists(),
+                "orphaned symlink left behind: {orphan}"
+            );
+        }
+        // ...and the conflicting link still belongs to the first formula.
+        let target = fs::read_link(prefix.join("bin/shared")).unwrap();
+        assert!(
+            target.to_string_lossy().contains("firstpkg"),
+            "bin/shared should still point at firstpkg, points at {}",
+            target.display()
+        );
+
+        installer.uninstall("secondpkg").unwrap();
+        assert!(!installer.is_installed("secondpkg"));
+        assert!(!root.join("cellar/secondpkg/1.0.0").exists());
+        assert!(
+            prefix.join("bin/shared").exists(),
+            "uninstalling the failed keg must not remove firstpkg's link"
+        );
     }
 
     #[tokio::test]

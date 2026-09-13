@@ -89,6 +89,80 @@ pub struct LinkedFile {
     pub target_path: PathBuf,
 }
 
+/// Every filesystem mutation performed while linking a keg, in the order it
+/// happened, so a failure part-way through can be undone.
+#[derive(Debug)]
+enum LinkAction {
+    CreatedLink(PathBuf),
+    CreatedDir(PathBuf),
+    /// A symlink that was removed to make room (replaced version, dead link,
+    /// or a legacy whole-directory symlink being expanded). `target` is the
+    /// raw, unresolved link target so it can be recreated verbatim.
+    RemovedSymlink {
+        path: PathBuf,
+        target: PathBuf,
+    },
+}
+
+/// Undo log making `link_keg` all-or-none: on any error every symlink and
+/// directory it created is removed and every symlink it replaced is restored,
+/// so a failed link never leaves orphaned entries in the prefix
+/// (issue #6 / upstream lucasgelfond/zerobrew#188).
+#[derive(Debug, Default)]
+struct LinkJournal {
+    actions: Vec<LinkAction>,
+}
+
+impl LinkJournal {
+    fn created_link(&mut self, path: &Path) {
+        self.actions
+            .push(LinkAction::CreatedLink(path.to_path_buf()));
+    }
+
+    fn created_dir(&mut self, path: &Path) {
+        self.actions
+            .push(LinkAction::CreatedDir(path.to_path_buf()));
+    }
+
+    fn removed_symlink(&mut self, path: &Path, target: &Path) {
+        self.actions.push(LinkAction::RemovedSymlink {
+            path: path.to_path_buf(),
+            target: target.to_path_buf(),
+        });
+    }
+
+    /// Replay the log backwards. Best-effort: a rollback step that fails must
+    /// not mask the original error.
+    fn rollback(&mut self) {
+        for action in self.actions.drain(..).rev() {
+            match action {
+                LinkAction::CreatedLink(path) => {
+                    let _ = fs::remove_file(&path);
+                }
+                LinkAction::CreatedDir(path) => {
+                    let _ = fs::remove_dir(&path);
+                }
+                LinkAction::RemovedSymlink { path, target } => {
+                    if path.symlink_metadata().is_ok() {
+                        let _ = fs::remove_file(&path);
+                    }
+                    #[cfg(unix)]
+                    let _ = std::os::unix::fs::symlink(&target, &path);
+                }
+            }
+        }
+    }
+}
+
+fn conflict(path: &Path) -> Error {
+    Error::LinkConflict {
+        conflicts: vec![ConflictedLink {
+            path: path.to_path_buf(),
+            owned_by: keg_name_from_symlink(path),
+        }],
+    }
+}
+
 fn keg_name_from_path(path: &Path) -> Option<String> {
     let components: Vec<_> = path.components().collect();
     for (i, c) in components.iter().enumerate() {
@@ -226,7 +300,25 @@ impl Linker {
                     } else {
                         old_target
                     };
+                    // A live symlink to a *non-directory* (typically another
+                    // keg's file) cannot be expanded — the directory can only
+                    // take its place by destroying it.
+                    if resolved.exists() && !resolved.is_dir() {
+                        conflicts.push(ConflictedLink {
+                            path: dst_path.clone(),
+                            owned_by: keg_name_from_symlink(&dst_path),
+                        });
+                        continue;
+                    }
                     Self::collect_conflicts_merged(&src_path, &resolved, &dst_path, conflicts);
+                    continue;
+                }
+                // A plain file already occupies the directory's place.
+                if dst_path.exists() && !dst_path.is_dir() {
+                    conflicts.push(ConflictedLink {
+                        path: dst_path,
+                        owned_by: None,
+                    });
                     continue;
                 }
                 Self::collect_conflicts(&src_path, &dst_path, conflicts);
@@ -285,6 +377,13 @@ impl Linker {
 
             if src_path.is_dir() {
                 if matching_old.exists() {
+                    if !matching_old.is_dir() {
+                        conflicts.push(ConflictedLink {
+                            path: dst_path,
+                            owned_by: keg_name_from_path(&matching_old),
+                        });
+                        continue;
+                    }
                     Self::collect_conflicts_merged(&src_path, &matching_old, &dst_path, conflicts);
                 } else {
                     Self::collect_conflicts(&src_path, &dst_path, conflicts);
@@ -311,24 +410,43 @@ impl Linker {
         }
     }
 
+    /// Link a keg into the prefix. All-or-none: a pre-flight scan rejects known
+    /// conflicts before anything is touched, and any error raised while linking
+    /// (including a conflict the scan could not predict) rolls back every
+    /// symlink and directory created so far and restores every symlink
+    /// replaced, leaving the prefix exactly as it was.
     pub fn link_keg(&self, keg_path: &Path) -> Result<Vec<LinkedFile>, Error> {
         self.check_conflicts(keg_path)?;
         self.link_opt(keg_path)?;
+
+        let mut journal = LinkJournal::default();
         let mut linked = Vec::new();
         for dir_name in LINK_DIRS {
             let src_dir = keg_path.join(dir_name);
             let dst_dir = self.prefix.join(dir_name);
-            if src_dir.exists() {
-                linked.extend(Self::link_recursive(&src_dir, &dst_dir)?);
+            if !src_dir.exists() {
+                continue;
+            }
+            match Self::link_recursive(&src_dir, &dst_dir, &mut journal) {
+                Ok(files) => linked.extend(files),
+                Err(e) => {
+                    journal.rollback();
+                    return Err(e);
+                }
             }
         }
         Ok(linked)
     }
 
-    fn link_recursive(src: &Path, dst: &Path) -> Result<Vec<LinkedFile>, Error> {
+    fn link_recursive(
+        src: &Path,
+        dst: &Path,
+        journal: &mut LinkJournal,
+    ) -> Result<Vec<LinkedFile>, Error> {
         let mut linked = Vec::new();
         if !dst.exists() {
             fs::create_dir_all(dst).map_err(Error::store("failed to create directory"))?;
+            journal.created_dir(dst);
         }
 
         for entry in fs::read_dir(src).map_err(Error::store("failed to read directory"))? {
@@ -351,16 +469,25 @@ impl Linker {
                     let old_target = if target.is_relative() {
                         dst_path.parent().unwrap_or(Path::new("")).join(&target)
                     } else {
-                        target
+                        target.clone()
                     };
+                    // A live symlink to a non-directory belongs to someone
+                    // else and cannot be expanded — report it instead of
+                    // deleting it.
+                    if old_target.exists() && !old_target.is_dir() {
+                        return Err(conflict(&dst_path));
+                    }
                     let _ = fs::remove_file(&dst_path);
+                    journal.removed_symlink(&dst_path, &target);
                     // A dangling directory symlink (e.g. the old keg was
                     // removed) has nothing left to expand.
                     if old_target.exists() {
-                        Self::link_recursive(&old_target, &dst_path)?;
+                        Self::link_recursive(&old_target, &dst_path, journal)?;
                     }
+                } else if dst_path.exists() && !dst_path.is_dir() {
+                    return Err(conflict(&dst_path));
                 }
-                linked.extend(Self::link_recursive(&src_path, &dst_path)?);
+                linked.extend(Self::link_recursive(&src_path, &dst_path, journal)?);
                 continue;
             }
 
@@ -369,7 +496,7 @@ impl Linker {
                     let resolved = if target.is_relative() {
                         dst_path.parent().unwrap_or(Path::new("")).join(&target)
                     } else {
-                        target
+                        target.clone()
                     };
                     if fs::canonicalize(&resolved).ok() == fs::canonicalize(&src_path).ok() {
                         if resolved.exists() {
@@ -380,16 +507,13 @@ impl Linker {
                             continue;
                         } else {
                             let _ = fs::remove_file(&dst_path);
+                            journal.removed_symlink(&dst_path, &target);
                         }
                     } else if can_replace_existing_link(&src_path, &dst_path) {
                         let _ = fs::remove_file(&dst_path);
+                        journal.removed_symlink(&dst_path, &target);
                     } else {
-                        return Err(Error::LinkConflict {
-                            conflicts: vec![ConflictedLink {
-                                path: dst_path.clone(),
-                                owned_by: keg_name_from_symlink(&dst_path),
-                            }],
-                        });
+                        return Err(conflict(&dst_path));
                     }
                 } else {
                     return Err(Error::LinkConflict {
@@ -411,6 +535,7 @@ impl Linker {
             #[cfg(unix)]
             std::os::unix::fs::symlink(&src_path, &dst_path)
                 .map_err(Error::store("failed to create symlink"))?;
+            journal.created_link(&dst_path);
             linked.push(LinkedFile {
                 link_path: dst_path,
                 target_path: src_path,
@@ -1166,5 +1291,116 @@ mod tests {
         let link = tmp.path().join("gh");
         std::os::unix::fs::symlink(tmp.path().join("cellar/gh/1.0.0/bin/gh"), &link).unwrap();
         assert_eq!(keg_name_from_symlink(&link).as_deref(), Some("gh"));
+    }
+
+    /// Regression for #6 (upstream lucasgelfond/zerobrew#188): a keg directory
+    /// landing on top of another keg's *file* symlink must be reported as a
+    /// conflict up front, not silently delete the other keg's link and fail
+    /// mid-way with an unrelated I/O error.
+    #[test]
+    fn directory_over_foreign_file_link_is_a_conflict() {
+        let tmp = TempDir::new().unwrap();
+        let prefix = tmp.path();
+        let linker = Linker::new(prefix).unwrap();
+
+        let keg_a = prefix.join("cellar/aaa/1.0.0");
+        fs::create_dir_all(keg_a.join("share")).unwrap();
+        fs::write(keg_a.join("share/thing"), b"aaa").unwrap();
+        linker.link_keg(&keg_a).unwrap();
+        assert!(prefix.join("share/thing").is_symlink());
+
+        let keg_b = prefix.join("cellar/bbb/1.0.0");
+        fs::create_dir_all(keg_b.join("share/thing")).unwrap();
+        fs::create_dir_all(keg_b.join("bin")).unwrap();
+        fs::write(keg_b.join("share/thing/x"), b"bbb").unwrap();
+        fs::write(keg_b.join("bin/bbb"), b"bbb").unwrap();
+
+        let err = linker.check_conflicts(&keg_b).unwrap_err();
+        assert!(
+            matches!(err, Error::LinkConflict { .. }),
+            "expected a link conflict, got {err:?}"
+        );
+
+        let err = linker.link_keg(&keg_b).unwrap_err();
+        assert!(
+            matches!(err, Error::LinkConflict { .. }),
+            "expected a link conflict, got {err:?}"
+        );
+
+        // All-or-none: the other keg's link survives and nothing from bbb leaks.
+        let target = fs::read_link(prefix.join("share/thing")).unwrap();
+        assert!(
+            target.to_string_lossy().contains("aaa"),
+            "aaa's link must not be destroyed by the failed bbb link"
+        );
+        assert!(
+            !prefix.join("bin/bbb").exists(),
+            "bbb must leave no orphaned symlinks behind"
+        );
+    }
+
+    /// Regression for #6: a failure part-way through linking (here: an
+    /// unwritable prefix directory, which the pre-flight conflict scan cannot
+    /// predict) must roll back every symlink already created for the keg.
+    #[test]
+    fn partial_link_failure_rolls_back_created_links() {
+        let tmp = TempDir::new().unwrap();
+        let prefix = tmp.path();
+        let linker = Linker::new(prefix).unwrap();
+
+        let keg = prefix.join("cellar/rollback/1.0.0");
+        fs::create_dir_all(keg.join("bin")).unwrap();
+        fs::create_dir_all(keg.join("lib")).unwrap();
+        fs::write(keg.join("bin/rollback"), b"exe").unwrap();
+        fs::write(keg.join("lib/librollback.a"), b"lib").unwrap();
+
+        // Make prefix/lib unwritable so the second link fails after the first
+        // one has already been created.
+        let lib_dir = prefix.join("lib");
+        fs::set_permissions(&lib_dir, PermissionsExt::from_mode(0o555)).unwrap();
+
+        let result = linker.link_keg(&keg);
+
+        fs::set_permissions(&lib_dir, PermissionsExt::from_mode(0o755)).unwrap();
+
+        assert!(
+            result.is_err(),
+            "linking should fail on an unwritable prefix"
+        );
+        assert!(
+            !prefix.join("bin/rollback").exists(),
+            "links created before the failure must be rolled back"
+        );
+    }
+
+    /// Rollback must not clobber links that already existed and were left
+    /// untouched (an idempotent re-link of an already linked keg).
+    #[test]
+    fn rollback_keeps_pre_existing_links_of_the_same_keg() {
+        let tmp = TempDir::new().unwrap();
+        let prefix = tmp.path();
+        let linker = Linker::new(prefix).unwrap();
+
+        let keg = prefix.join("cellar/idem/1.0.0");
+        fs::create_dir_all(keg.join("bin")).unwrap();
+        fs::write(keg.join("bin/idem"), b"exe").unwrap();
+        linker.link_keg(&keg).unwrap();
+
+        // Now add a lib/ entry and make prefix/lib unwritable: relinking fails,
+        // but the already-correct bin link belongs to this keg and stays.
+        fs::create_dir_all(keg.join("lib")).unwrap();
+        fs::write(keg.join("lib/libidem.a"), b"lib").unwrap();
+        let lib_dir = prefix.join("lib");
+        fs::set_permissions(&lib_dir, PermissionsExt::from_mode(0o555)).unwrap();
+
+        let result = linker.link_keg(&keg);
+
+        fs::set_permissions(&lib_dir, PermissionsExt::from_mode(0o755)).unwrap();
+
+        assert!(result.is_err());
+        assert!(
+            prefix.join("bin/idem").exists(),
+            "pre-existing links must survive a rollback"
+        );
     }
 }
