@@ -3,10 +3,12 @@ use std::process::{Command, Output};
 
 struct TestEnv {
     root: tempfile::TempDir,
-    /// On macOS, Mach-O binary patching requires the prefix path to be no longer
-    /// than the original Homebrew prefix (`/opt/homebrew` = 13 chars). The default
-    /// OS temp directory on macOS (`/var/folders/…`) produces paths far too long,
-    /// so we create a separate short temp dir in `/tmp` for the prefix.
+    /// On macOS, Mach-O patching requires the prefix to be no longer than the
+    /// Homebrew prefix the bottles were built against — 13 characters on Apple
+    /// Silicon, 10 on Intel. The default temp directory on macOS
+    /// (`/var/folders/…`) is far longer than either, so the prefix gets its own
+    /// short temp dir in `/tmp`. `/tmp/zb` plus three random characters is
+    /// exactly 10, which fits both.
     prefix_dir: tempfile::TempDir,
 }
 
@@ -23,15 +25,24 @@ impl TestEnv {
     }
 
     fn prefix(&self) -> PathBuf {
-        self.prefix_dir.path().to_path_buf()
+        let path = self.prefix_dir.path().to_path_buf();
+        // Load-bearing: `zb init` refuses an over-budget prefix outright, so
+        // lengthening this — one more random character would do it — would fail
+        // every test here on an Intel Mac and nowhere else.
+        assert!(
+            path.to_string_lossy().len() <= "/usr/local".len(),
+            "test prefix {} is longer than the tightest budget any platform imposes",
+            path.display(),
+        );
+        path
     }
 
     fn zb(&self, args: &[&str]) -> Output {
         let zb = env!("CARGO_BIN_EXE_zb");
         Command::new(zb)
             .env("ZBREW_ROOT", self.root.path())
-            // Use the short prefix so Mach-O patching stays within the 13-char limit,
-            // and prevent a host-level ZBREW_PREFIX from leaking into the test.
+            // Use the short prefix so Mach-O patching stays within budget, and
+            // prevent a host-level ZBREW_PREFIX from leaking into the test.
             .env("ZBREW_PREFIX", self.prefix())
             .env("ZBREW_AUTO_INIT", "true")
             .args(args)

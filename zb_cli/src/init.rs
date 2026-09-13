@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::ui::{PromptDefault, StdUi};
-use zb_io::validate_privileged_path;
+use zb_io::{check_prefix_fits, homebrew_prefix_for_host, validate_privileged_path};
 
 #[derive(Debug)]
 pub enum InitError {
@@ -45,10 +45,45 @@ pub fn is_writable(path: &Path) -> bool {
     }
 }
 
-/// Longest Homebrew prefix we may need to replace in Mach-O binaries.
-/// On macOS, paths inside Mach-O headers are fixed-size, so the replacement
-/// prefix must be no longer than the original.  `/opt/homebrew` = 13 chars.
-const MAX_PREFIX_LEN_MACOS: usize = 13;
+/// Refuse a prefix that cannot be patched into the bottles `host_prefix`
+/// describes.
+///
+/// The budget is the length of the Homebrew prefix those bottles were built
+/// against, which differs by architecture: 13 characters on Apple Silicon, 10 on
+/// Intel. `host_prefix` is a parameter rather than a read of
+/// `std::env::consts` so both can be exercised from either; it is `None` on
+/// platforms that impose no constraint.
+///
+/// This is an error rather than a warning because what it prevents is silent.
+/// An over-budget prefix produces packages that install cleanly and only fail
+/// once something looks a path up at run time, and a warning at this point is
+/// what let the old default slip through on Intel.
+fn ensure_prefix_fits(
+    root: &Path,
+    prefix: &Path,
+    host_prefix: Option<&str>,
+) -> Result<(), InitError> {
+    let Err(too_long) = check_prefix_fits(&prefix.to_string_lossy(), host_prefix) else {
+        return Ok(());
+    };
+
+    let mut message = too_long.message();
+    if let Some(shorter) = too_long.suggestion {
+        message.push_str(&format!(
+            "\n\nTry: {}",
+            style(format!(
+                "zb --root {} --prefix {shorter} init",
+                root.display()
+            ))
+            .cyan(),
+        ));
+    }
+    message.push_str(
+        "\n\nIf the prefix came from old shell config, unset ZBREW_PREFIX and rerun init.",
+    );
+
+    Err(InitError::Message(message))
+}
 
 pub fn run_init(
     root: &Path,
@@ -61,29 +96,11 @@ pub fn run_init(
     validate_privileged_path(prefix)
         .map_err(|e| InitError::Message(format!("invalid prefix path: {e}")))?;
 
-    // On macOS, warn early if the chosen prefix is too long for Mach-O patching.
-    if cfg!(target_os = "macos") {
-        let prefix_str = prefix.to_string_lossy();
-        if prefix_str.len() > MAX_PREFIX_LEN_MACOS {
-            ui.note(format!(
-                "Prefix \"{}\" ({} chars) exceeds the macOS Mach-O limit of {} characters.",
-                prefix_str,
-                prefix_str.len(),
-                MAX_PREFIX_LEN_MACOS,
-            ))?;
-            ui.info("Path-sensitive packages (e.g. git, curl) will fail to install.")?;
-            ui.info(format!(
-                "Consider a shorter prefix, e.g.: {}",
-                style(format!(
-                    "zb --root {} --prefix /opt/zbrew init",
-                    root.display()
-                ))
-                .cyan(),
-            ))?;
-            ui.info("If this came from old shell config, unset ZBREW_PREFIX and rerun init.")?;
-            ui.blank_line()?;
-        }
-    }
+    ensure_prefix_fits(
+        root,
+        prefix,
+        homebrew_prefix_for_host(std::env::consts::OS, std::env::consts::ARCH),
+    )?;
 
     ui.heading("Initializing zbrew...")?;
 
@@ -564,6 +581,90 @@ fn io_to_core_error(err: std::io::Error) -> zb_core::Error {
 
 #[cfg(test)]
 mod tests {
+
+    // `zb init` refused nothing useful on an Intel Mac before this: the check was
+    // a compile-time 13, so the 13-character default passed and then failed to
+    // patch. These cover the guard itself, with the host budget injected so both
+    // architectures are reachable from either.
+
+    #[test]
+    fn init_rejects_a_prefix_the_host_cannot_patch() {
+        let err = ensure_prefix_fits(
+            Path::new("/opt/zbrew"),
+            Path::new("/opt/pkgtools"),
+            zb_io::homebrew_prefix_for_host("macos", "x86_64"),
+        )
+        .expect_err("13 characters cannot fit Intel's 10");
+
+        let InitError::Message(message) = err;
+        assert!(message.contains("/opt/pkgtools"), "{message}");
+        assert!(message.contains("10-character"), "{message}");
+        assert!(message.contains("unset ZBREW_PREFIX"), "{message}");
+    }
+
+    #[test]
+    fn init_accepts_on_apple_silicon_what_it_rejects_on_intel() {
+        let on = |arch| {
+            ensure_prefix_fits(
+                Path::new("/opt/zbrew"),
+                Path::new("/opt/pkgtools"),
+                zb_io::homebrew_prefix_for_host("macos", arch),
+            )
+        };
+
+        assert!(on("aarch64").is_ok());
+        assert!(on("x86_64").is_err());
+    }
+
+    #[test]
+    fn init_accepts_the_default_prefix_on_every_platform() {
+        for host in [
+            zb_io::homebrew_prefix_for_host("macos", "x86_64"),
+            zb_io::homebrew_prefix_for_host("macos", "aarch64"),
+            zb_io::homebrew_prefix_for_host("linux", "x86_64"),
+        ] {
+            assert!(
+                ensure_prefix_fits(
+                    Path::new(zb_io::DEFAULT_MACOS_PREFIX),
+                    Path::new(zb_io::DEFAULT_MACOS_PREFIX),
+                    host,
+                )
+                .is_ok(),
+                "the default prefix has to survive init on {host:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_remedy_init_offers_is_one_that_fits() {
+        let err = ensure_prefix_fits(
+            Path::new("/opt/zbrew"),
+            Path::new("/opt/pkgtools"),
+            zb_io::homebrew_prefix_for_host("macos", "x86_64"),
+        )
+        .expect_err("13 characters cannot fit Intel's 10");
+
+        // The old advice suggested a prefix that was itself over budget, so
+        // following it fixed nothing. Every prefix the message names has to fit.
+        let InitError::Message(message) = err;
+        let suggested: Vec<&str> = message
+            .split("--prefix ")
+            .skip(1)
+            .filter_map(|rest| rest.split_whitespace().next())
+            .map(|token| token.trim_end_matches(['`', '.', ',']))
+            .collect();
+
+        assert!(
+            !suggested.is_empty(),
+            "no concrete prefix offered: {message}"
+        );
+        for candidate in suggested {
+            assert!(
+                candidate.len() <= "/usr/local".len(),
+                "suggested {candidate} does not fit the budget it was offered for"
+            );
+        }
+    }
     use super::*;
     use crate::ui::Ui;
     use std::fs;

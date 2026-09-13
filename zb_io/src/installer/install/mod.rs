@@ -22,6 +22,7 @@ use crate::storage::blob::BlobCache;
 use crate::storage::db::Database;
 use crate::storage::store::Store;
 
+use crate::extraction::patch::relocation::{check_prefix_fits, homebrew_prefix_for_bottle_tag};
 use zb_core::{Error, Formula, InstallMethod};
 
 use bottle::dependency_cellar_path;
@@ -155,6 +156,25 @@ impl Installer {
 
         if bottle_items.is_empty() && source_items.is_empty() {
             return Ok(ExecuteResult { installed: 0 });
+        }
+
+        // Every bottle was built against some Homebrew prefix, and a path stored
+        // in a Mach-O string table cannot grow in place. Check before downloading
+        // anything: a prefix that does not fit yields packages that install
+        // cleanly and then fail at run time, and `zb init` cannot vouch for a
+        // prefix that was changed after it ran. Source builds are exempt because
+        // they are built against this prefix to begin with.
+        for item in &bottle_items {
+            let InstallMethod::Bottle(ref bottle) = item.method else {
+                unreachable!()
+            };
+            check_prefix_fits(
+                &self.prefix.to_string_lossy(),
+                homebrew_prefix_for_bottle_tag(&bottle.tag),
+            )
+            .map_err(|too_long| Error::InvalidArgument {
+                message: too_long.message(),
+            })?;
         }
 
         let mut installed = 0usize;

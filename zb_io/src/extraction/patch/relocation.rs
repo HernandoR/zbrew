@@ -162,6 +162,67 @@ fn suggested_prefix(max_len: usize, new_prefix: &str) -> Option<&'static str> {
         .find(|candidate| candidate.len() <= max_len && *candidate != new_prefix)
 }
 
+/// A prefix that bottles for this platform cannot be patched to use.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PrefixTooLong {
+    /// The prefix that does not fit.
+    pub prefix: String,
+    /// The length of the Homebrew prefix the bottles were built against, which
+    /// is the most a replacement may occupy.
+    pub budget: usize,
+    /// A shorter prefix worth suggesting, when one exists.
+    pub suggestion: Option<&'static str>,
+}
+
+/// Whether `prefix` can be patched into bottles built against `old_prefix`.
+///
+/// `old_prefix` is `None` on platforms that impose no length constraint, where
+/// every prefix fits. Equal lengths are fine: a replacement only has to fit the
+/// space the bottle already reserved, not be shorter than it.
+pub fn check_prefix_fits(prefix: &str, old_prefix: Option<&str>) -> Result<(), PrefixTooLong> {
+    let Some(old_prefix) = old_prefix else {
+        return Ok(());
+    };
+
+    if prefix.len() <= old_prefix.len() {
+        return Ok(());
+    }
+
+    Err(PrefixTooLong {
+        prefix: prefix.to_string(),
+        budget: old_prefix.len(),
+        suggestion: suggested_prefix(old_prefix.len(), prefix),
+    })
+}
+
+impl PrefixTooLong {
+    /// Why this prefix cannot be used, and the one thing that fixes it.
+    pub fn message(&self) -> String {
+        let mut message = format!(
+            "prefix \"{}\" is {} characters, but bottles for this machine are built \
+             against a {}-character Homebrew prefix. A path stored in a Mach-O string \
+             table cannot grow in place, so path-sensitive packages (git, gnupg, curl) \
+             would install without error and then fail at run time.",
+            self.prefix,
+            self.prefix.len(),
+            self.budget,
+        );
+
+        match self.suggestion {
+            Some(shorter) => message.push_str(&format!(
+                " Use a prefix of at most {} characters, for example `--prefix {shorter}`.",
+                self.budget
+            )),
+            None => message.push_str(&format!(
+                " Use a prefix of at most {} characters.",
+                self.budget
+            )),
+        }
+
+        message
+    }
+}
+
 /// Why a hardcoded path survived patching, and what to tell the user about it.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct TooLongToRewrite {
@@ -490,6 +551,64 @@ mod tests {
         // is the default prefix rather than something still too long.
         assert!(message.contains(&format!("--prefix {DEFAULT_MACOS_PREFIX}")));
         assert!(message.contains("issues/7"));
+    }
+
+    #[test]
+    fn a_prefix_within_budget_is_accepted_even_when_it_matches_exactly() {
+        // The default sits exactly on the Intel budget, so "equal fits" is not a
+        // corner case here -- it is the shipping configuration.
+        assert_eq!(
+            check_prefix_fits(DEFAULT_MACOS_PREFIX, Some("/usr/local")),
+            Ok(())
+        );
+        assert_eq!(
+            check_prefix_fits(DEFAULT_MACOS_PREFIX, Some("/opt/homebrew")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_platform_without_a_budget_accepts_any_prefix() {
+        assert_eq!(
+            check_prefix_fits("/home/someone/.local/share/zbrew/prefix", None),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_over_budget_prefix_is_rejected_with_a_remedy_that_fits() {
+        // Issue #86 exactly: 13 characters against Intel's 10.
+        let rejected = check_prefix_fits(APPLE_SILICON_ONLY_PREFIX, Some("/usr/local"))
+            .expect_err("13 characters cannot fit 10");
+
+        assert_eq!(rejected.budget, 10);
+
+        let suggestion = rejected.suggestion.expect("a shorter prefix exists");
+        assert!(
+            suggestion.len() <= rejected.budget,
+            "the remedy {suggestion} has to fit the budget it is offered for"
+        );
+
+        let message = rejected.message();
+        assert!(message.contains(APPLE_SILICON_ONLY_PREFIX));
+        assert!(message.contains("13 characters"));
+        assert!(message.contains("10-character"));
+        assert!(message.contains(&format!("--prefix {suggestion}")));
+    }
+
+    #[test]
+    fn the_same_prefix_passes_on_apple_silicon_and_fails_on_intel() {
+        // The asymmetry the old hardcoded constant could not express, and the
+        // reason it has to be derived per host.
+        let on = |arch| {
+            check_prefix_fits(
+                APPLE_SILICON_ONLY_PREFIX,
+                homebrew_prefix_for_host("macos", arch),
+            )
+        };
+
+        assert!(on("aarch64").is_ok());
+        assert!(on("x86_64").is_err());
     }
 
     #[test]
