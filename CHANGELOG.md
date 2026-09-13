@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Bump MSRV to 1.96, required to build the latest `cargo-audit` in CI ([#393](https://github.com/lucasgelfond/zerobrew/pull/393))
 - Refresh `Cargo.lock` for audit findings: `crossbeam-epoch` (RUSTSEC-2026-0204), `quinn-proto` (RUSTSEC-2026-0185), and `anyhow` (RUSTSEC-2026-0190) ([#393](https://github.com/lucasgelfond/zerobrew/pull/393))
+- Refresh `Cargo.lock` for audit findings: `h2` 0.4.19 (RUSTSEC-2026-0258) and `chacha20` 0.10.2, replacing a yanked release ([#64](https://github.com/HernandoR/zerobrew/pull/64))
 - Ad-hoc re-signing now passes `--preserve-metadata=entitlements,requirements,flags,runtime`, as Homebrew does, so entitlements and the hardened runtime survive patching ([#1](https://github.com/HernandoR/zerobrew/issues/1))
 - `/usr/local` is only rewritten when what follows it is Homebrew's (`/Cellar/`, `/Caskroom/`, `/Homebrew/`, `/opt/`), leaving genuine system paths such as `/usr/local/lib` alone ([#1](https://github.com/HernandoR/zerobrew/issues/1))
 - Walking a keg for Mach-O files reads four magic bytes per file instead of the whole file ([#1](https://github.com/HernandoR/zerobrew/issues/1))
