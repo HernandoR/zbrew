@@ -23,6 +23,11 @@ pub fn execute(
         normalized
     };
 
+    if formulas.is_empty() {
+        ui.info("No formulas to uninstall.").map_err(ui_error)?;
+        return Ok(());
+    }
+
     ui.heading(format!(
         "Uninstalling {}...",
         style(formulas.join(", ")).bold()
@@ -42,8 +47,10 @@ pub fn execute(
                 }
             }
         }
-    } else if let Err(e) = installer.uninstall(&formulas[0]) {
-        errors.push((formulas[0].clone(), e));
+    } else if let Some(name) = formulas.first()
+        && let Err(e) = installer.uninstall(name)
+    {
+        errors.push((name.clone(), e));
     }
 
     if errors.is_empty() {
