@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ad-hoc re-signing now passes `--preserve-metadata=entitlements,requirements,flags,runtime`, as Homebrew does, so entitlements and the hardened runtime survive patching ([#1](https://github.com/HernandoR/zerobrew/issues/1))
 - `/usr/local` is only rewritten when what follows it is Homebrew's (`/Cellar/`, `/Caskroom/`, `/Homebrew/`, `/opt/`), leaving genuine system paths such as `/usr/local/lib` alone ([#1](https://github.com/HernandoR/zerobrew/issues/1))
 - Walking a keg for Mach-O files reads four magic bytes per file instead of the whole file ([#1](https://github.com/HernandoR/zerobrew/issues/1))
+- Security reports go to a private advisory on this repository instead of the upstream maintainer's email, and the response-time commitments written for the upstream project are replaced with a best-effort statement ([#22](https://github.com/HernandoR/zerobrew/issues/22))
+- Dependabot opens weekly dependency update pull requests for the cargo workspace and for GitHub Actions, so advisories do not pile up between manual `Cargo.lock` refreshes ([#21](https://github.com/HernandoR/zerobrew/issues/21))
 
 ### Fixed
 - Mach-O patching validates where it writes: path strings are rewritten only inside the ranges the Mach-O structure declares as C string storage — load command strings and `S_CSTRING_LITERALS` sections — so a path that happens to appear in code, in a pointer table or in length-prefixed Rust/Go string data is no longer silently corrupted ([#1](https://github.com/HernandoR/zerobrew/issues/1))
