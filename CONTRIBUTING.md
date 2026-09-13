@@ -51,10 +51,19 @@ out in the Discord to give us a heads up or open an issue first to discuss your 
 > turnaround!
 
 > [!IMPORTANT]
-> CI tests every pull request on Linux. macOS runners bill at ten times the Linux rate, so the
-> macOS job is opt-in: add the `ci-macos` label to the pull request to approve it. It always runs
-> on `release-*` branches and release tags. Please label anything that touches macOS-specific
-> code — Mach-O patching, codesigning, cask installation — since Linux CI does not compile it.
+> CI tests every pull request on Linux. The macOS job runs automatically when a change touches
+> macOS-specific code — Mach-O patching, codesigning, cask installation — because Linux CI does
+> not compile any of it. It also always runs on `release-*` branches and release tags.
+>
+> Detection is by path (`macos.rs`, `macho.rs`, anything with `darwin` or `cask` in the name) and
+> by content (any `.rs` file containing `cfg(target_os = "macos")`). Neither test alone is enough:
+> `macos.rs` is gated at the module level and so contains no `target_os` attribute of its own,
+> while a file like `cellar/materialize.rs` is portable apart from one `cfg` block inside it.
+>
+> Add the `ci-macos` label to run the macOS job on a change that detection does not flag. macOS
+> runners are free on public repositories, so this is not about cost — the macOS concurrency
+> allowance is small, and running the job on changes that cannot affect it only makes other
+> people queue.
 
 ### Using Just
 
