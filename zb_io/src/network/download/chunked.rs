@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::progress::InstallProgress;
-use crate::storage::blob::BlobCache;
+use crate::storage::blob::{BlobCache, BlobWriter};
 use futures_util::StreamExt;
 use reqwest::StatusCode;
 use reqwest::header::{ACCEPT_RANGES, AUTHORIZATION, CONTENT_RANGE};
@@ -23,6 +23,9 @@ use super::{DownloadProgressCallback, MAX_CHUNK_RETRIES, MAX_CONCURRENT_CHUNKS};
 
 const MIN_CHUNK_SIZE: u64 = 5 * 1024 * 1024;
 const MAX_CHUNK_SIZE: u64 = 20 * 1024 * 1024;
+
+/// Buffer used to stream the finished blob back through the hasher.
+const HASH_READ_BUFFER_SIZE: usize = 1024 * 1024;
 
 struct ChunkDownloadContext<'a> {
     client: &'a reqwest::Client,
@@ -244,7 +247,11 @@ pub(crate) async fn download_with_chunks(
     let expected_chunks: BTreeMap<u64, u64> = chunks.iter().map(|c| (c.offset, c.size)).collect();
     let total_chunks = chunks.len();
 
-    let (chunk_tx, mut chunk_rx) = mpsc::unbounded_channel::<(Vec<u8>, u64)>();
+    // Only chunk metadata (offset, length) travels over this channel. The chunk
+    // bytes themselves are written straight to the blob file and then hashed by
+    // reading that file back, so peak memory stays at a few chunks rather than
+    // the whole download.
+    let (chunk_tx, mut chunk_rx) = mpsc::unbounded_channel::<(u64, u64)>();
 
     let total_downloaded = Arc::new(AtomicU64::new(0));
 
@@ -296,7 +303,7 @@ pub(crate) async fn download_with_chunks(
             }
 
             chunk_tx
-                .send((chunk_data, chunk.offset))
+                .send((chunk.offset, chunk_data.len() as u64))
                 .map_err(Error::network("failed to send chunk metadata"))?;
 
             Ok::<(), Error>(())
@@ -307,28 +314,26 @@ pub(crate) async fn download_with_chunks(
 
     drop(chunk_tx);
 
-    let mut received_chunks = BTreeMap::new();
+    let mut received_chunks: BTreeMap<u64, u64> = BTreeMap::new();
     let mut chunks_written = 0u64;
 
-    while let Some((chunk_data, offset)) = chunk_rx.recv().await {
+    while let Some((offset, len)) = chunk_rx.recv().await {
         let expected_size = expected_chunks
             .get(&offset)
             .ok_or_else(|| Error::NetworkFailure {
                 message: format!("received unexpected chunk at offset {}", offset),
             })?;
 
-        if chunk_data.len() != *expected_size as usize {
+        if len != *expected_size {
             return Err(Error::NetworkFailure {
                 message: format!(
                     "chunk size mismatch at offset {}: expected {} bytes, got {} bytes",
-                    offset,
-                    expected_size,
-                    chunk_data.len()
+                    offset, expected_size, len
                 ),
             });
         }
 
-        received_chunks.insert(offset, chunk_data);
+        received_chunks.insert(offset, len);
         chunks_written += 1;
     }
 
@@ -347,9 +352,8 @@ pub(crate) async fn download_with_chunks(
         });
     }
 
-    let mut hasher = Sha256::new();
     let mut total_size = 0u64;
-    for (offset, chunk_data) in received_chunks {
+    for (offset, len) in received_chunks {
         if offset != total_size {
             return Err(Error::NetworkFailure {
                 message: format!(
@@ -358,8 +362,7 @@ pub(crate) async fn download_with_chunks(
                 ),
             });
         }
-        hasher.update(&chunk_data);
-        total_size += chunk_data.len() as u64;
+        total_size += len;
     }
 
     if total_size != ctx.file_size {
@@ -371,15 +374,8 @@ pub(crate) async fn download_with_chunks(
         });
     }
 
-    let actual_hash = crate::checksum::sha256_hex(hasher);
-
-    if actual_hash != ctx.expected_sha256 {
-        return Err(Error::ChecksumMismatch {
-            expected: ctx.expected_sha256.to_string(),
-            actual: actual_hash,
-        });
-    }
-
+    // All chunk tasks have been joined above, so this is the only remaining
+    // reference to the writer.
     let mut writer = Arc::try_unwrap(writer)
         .map_err(|_| Error::NetworkFailure {
             message: "failed to unwrap writer Arc".to_string(),
@@ -390,6 +386,15 @@ pub(crate) async fn download_with_chunks(
         .flush()
         .map_err(Error::network("failed to flush download"))?;
 
+    let actual_hash = hash_written_blob(&mut writer, ctx.file_size)?;
+
+    if actual_hash != ctx.expected_sha256 {
+        return Err(Error::ChecksumMismatch {
+            expected: ctx.expected_sha256.to_string(),
+            actual: actual_hash,
+        });
+    }
+
     if let (Some(cb), Some(n)) = (&ctx.progress, &ctx.name) {
         cb(InstallProgress::DownloadCompleted {
             name: n.clone(),
@@ -398,6 +403,44 @@ pub(crate) async fn download_with_chunks(
     }
 
     writer.commit()
+}
+
+/// Hash the bytes already written to the blob file.
+///
+/// The chunks were streamed to disk as they arrived, so re-reading the file is
+/// what lets us verify the digest without holding the whole download in memory.
+/// Reading also confirms the bytes actually landed at the expected offsets,
+/// which the per-chunk bookkeeping alone cannot prove.
+fn hash_written_blob(writer: &mut BlobWriter, expected_size: u64) -> Result<String, Error> {
+    writer
+        .seek(std::io::SeekFrom::Start(0))
+        .map_err(Error::network("failed to rewind blob for hashing"))?;
+
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; HASH_READ_BUFFER_SIZE];
+    let mut hashed = 0u64;
+
+    loop {
+        let n = writer
+            .read(&mut buf)
+            .map_err(Error::network("failed to read blob for hashing"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        hashed += n as u64;
+    }
+
+    if hashed != expected_size {
+        return Err(Error::NetworkFailure {
+            message: format!(
+                "incomplete write: expected {} bytes on disk, found {} bytes",
+                expected_size, hashed
+            ),
+        });
+    }
+
+    Ok(crate::checksum::sha256_hex(hasher))
 }
 
 async fn validate_range_support(ctx: &ChunkedDownloadContext<'_>) -> Result<bool, Error> {
@@ -511,6 +554,72 @@ mod tests {
         let downloaded_content = std::fs::read(&blob_path).unwrap();
         assert_eq!(downloaded_content.len(), large_content.len());
         assert_eq!(downloaded_content, large_content);
+    }
+
+    /// The digest is computed by reading the assembled blob back off disk, so a
+    /// server that serves well-formed, correctly-sized chunks whose bytes do not
+    /// match the expected hash must still be rejected, and no blob left behind.
+    #[tokio::test]
+    async fn chunked_download_rejects_checksum_mismatch() {
+        let mock_server = MockServer::start().await;
+
+        let large_content = vec![0xABu8; 15 * 1024 * 1024];
+        let wrong_sha256 = "0".repeat(64);
+
+        Mock::given(method("HEAD"))
+            .and(path("/large.tar.gz"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("Accept-Ranges", "bytes")
+                    .append_header("Content-Length", large_content.len().to_string()),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let body = large_content.clone();
+        Mock::given(method("GET"))
+            .and(path("/large.tar.gz"))
+            .respond_with(move |req: &wiremock::Request| {
+                if let Some(range_header) = req.headers.get("Range") {
+                    let range_str = range_header.to_str().unwrap();
+                    let range_part = range_str.strip_prefix("bytes=").unwrap();
+                    let (start_str, end_str) = range_part.split_once('-').unwrap();
+                    let start: usize = start_str.parse().unwrap();
+                    let end: usize = end_str.parse().unwrap();
+
+                    let chunk = &body[start..=end];
+                    ResponseTemplate::new(206)
+                        .append_header("Content-Length", chunk.len().to_string())
+                        .append_header(
+                            "Content-Range",
+                            format!("bytes {}-{}/{}", start, end, body.len()),
+                        )
+                        .set_body_bytes(chunk.to_vec())
+                } else {
+                    ResponseTemplate::new(200).set_body_bytes(body.clone())
+                }
+            })
+            .mount(&mock_server)
+            .await;
+
+        let tmp = TempDir::new().unwrap();
+        let blob_cache = BlobCache::new(tmp.path()).unwrap();
+        let downloader = Downloader::new(blob_cache);
+
+        let url = format!("{}/large.tar.gz", mock_server.uri());
+        let result = downloader.download(&url, &wrong_sha256).await;
+
+        assert!(
+            result.is_err(),
+            "expected a checksum mismatch to be rejected"
+        );
+        assert!(
+            !tmp.path()
+                .join("blobs")
+                .join(format!("{wrong_sha256}.tar.gz"))
+                .exists(),
+            "a blob that failed verification must not be persisted"
+        );
     }
 
     #[tokio::test]

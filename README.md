@@ -42,11 +42,23 @@ or run the `source` command it prints.
 > `https://zerobrew.rs/install` still serves the **upstream** installer, and this fork
 > does not control that domain. Use the URL above to install this fork.
 
-Or via Homebrew:
+> [!WARNING]
+> Do **not** install from the upstream tap `lucasgelfond/homebrew-zerobrew`. It is still on
+> 0.1.1 — five releases behind — and that build fails with `store corruption: prefix too long`
+> when installing ordinary packages such as `jq`. This fork does not control that tap
+> ([#16](https://github.com/HernandoR/zerobrew/issues/16),
+> [#17](https://github.com/HernandoR/zerobrew/issues/17)). Use the installer above, or download
+> a binary from [GitHub Releases](https://github.com/HernandoR/zerobrew/releases).
+
+Or via Homebrew, from this fork's own tap:
 
 ```bash
 brew install HernandoR/zerobrew/zerobrew
 ```
+
+On Linux the installer picks a statically linked musl binary when your glibc is older than
+2.35, so `zb` also runs in environments such as Google Colab. You can download the
+`*-musl` release assets directly if you prefer.
 
 Or build from source:
 

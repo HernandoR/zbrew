@@ -38,11 +38,21 @@ curl -fsSL https://raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh 
 > `https://zerobrew.rs/install` 提供的仍是**上游**的安装脚本，该域名不在本分支控制之下。
 > 安装本分支请使用上面的地址。
 
-或通过 Homebrew 安装：
+> [!WARNING]
+> 请**不要**从上游的 tap `lucasgelfond/homebrew-zerobrew` 安装。它仍停留在 0.1.1，落后当前版本
+> 五个发布；用它安装 `jq` 这类普通软件包时会报 `store corruption: prefix too long`。该 tap
+> 不在本分支的控制之下（[#16](https://github.com/HernandoR/zerobrew/issues/16)、
+> [#17](https://github.com/HernandoR/zerobrew/issues/17)）。请改用上面的安装脚本，或从
+> [GitHub Releases](https://github.com/HernandoR/zerobrew/releases) 下载二进制文件。
+
+或通过 Homebrew 安装（本分支自己的 tap）：
 
 ```bash
 brew install HernandoR/zerobrew/zerobrew
 ```
+
+在 Linux 上，如果系统的 glibc 低于 2.35，安装脚本会自动选择静态链接的 musl 二进制，
+因此 `zb` 在 Google Colab 这类环境中同样可以运行。你也可以直接下载带 `*-musl` 后缀的发布产物。
 
 或从源码构建：
 

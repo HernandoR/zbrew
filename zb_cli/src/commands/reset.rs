@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use zb_io::validate_privileged_path;
+use zb_io::validate_destructive_path;
 
 use crate::init::{InitError, run_init};
 use crate::ui::{PromptDefault, StdUi};
@@ -12,8 +12,12 @@ pub fn execute(
     yes: bool,
     ui: &mut StdUi,
 ) -> Result<(), zb_core::Error> {
-    validate_privileged_path(root)?;
-    validate_privileged_path(prefix)?;
+    // `reset` recursively deletes the contents of both directories and may fall
+    // back to `sudo rm -rf`. Both values come from --root/--prefix or the
+    // ZEROBREW_ROOT/ZEROBREW_PREFIX environment variables, so a stale or
+    // mistyped value would otherwise be wiped without question.
+    validate_destructive_path(root)?;
+    validate_destructive_path(prefix)?;
 
     if !root.exists() && !prefix.exists() {
         ui.info("Nothing to reset - directories do not exist.")
