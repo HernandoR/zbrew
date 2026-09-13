@@ -3,7 +3,7 @@
 // run in CI regardless of the host. Nothing in here touches the filesystem,
 // subprocesses or libc.
 #[allow(dead_code)]
-pub(crate) mod relocation;
+pub mod relocation;
 
 #[cfg(target_os = "linux")]
 pub mod linux;

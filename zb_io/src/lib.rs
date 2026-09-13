@@ -12,6 +12,9 @@ pub mod storage;
 pub use build::{BuildExecutor, DepInfo};
 pub use cellar::{Cellar, LinkedFile, Linker, MaterializedKeg};
 pub use extraction::extract_tarball;
+pub use extraction::patch::relocation::{
+    DEFAULT_MACOS_PREFIX, homebrew_prefix_for_bottle_tag, homebrew_prefix_for_host,
+};
 pub use installer::{
     DiagnosticReport, ExecuteResult, HomebrewMigrationPackages, HomebrewPackage, InstallPlan,
     Installer, OutdatedPackage, PlanFailure, RepairSummary, create_installer,

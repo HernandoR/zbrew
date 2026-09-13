@@ -20,12 +20,67 @@ pub(crate) const HOMEBREW_PREFIXES: &[&str] = &[
 /// follows it belongs to Homebrew.
 const HOMEBREW_SUBPATHS: &[&str] = &["/Cellar/", "/Caskroom/", "/Homebrew/", "/opt/"];
 
+/// The default macOS install prefix.
+///
+/// Its length is not a matter of taste: it is the longest prefix that still fits
+/// the tightest budget any supported platform imposes, which is `/usr/local`'s
+/// 10 characters on Intel. At exactly 10 it fits there and has room to spare
+/// against Apple Silicon's 13, so the default configuration needs no
+/// per-architecture special case.
+pub const DEFAULT_MACOS_PREFIX: &str = "/opt/zbrew";
+
 /// Prefixes short enough to be worth suggesting to someone whose current one
 /// does not fit, shortest last.
-const SUGGESTED_PREFIXES: &[&str] = &["/opt/zerobrew", "/opt/zbrew", "/opt/zb", "/zb"];
+///
+/// A root-level directory such as `/zb` is deliberately absent: SIP makes `/`
+/// read-only, so creating one needs an `/etc/synthetic.conf` entry and a reboot,
+/// and `validate_destructive_path` rejects a one-component path anyway. It was
+/// never advice anyone could act on.
+const SUGGESTED_PREFIXES: &[&str] = &[DEFAULT_MACOS_PREFIX, "/opt/zb"];
 
 /// How many skipped paths a warning quotes before it stops listing them.
 const EXAMPLES_IN_WARNING: usize = 3;
+
+/// The Homebrew prefix that bottles for `os`/`arch` were built against, or
+/// `None` when the platform imposes no length constraint.
+///
+/// This is the budget `zb init` has to judge a prefix against, before any bottle
+/// exists to inspect. Linux is `None` because ELF rewriting resizes the strings
+/// it patches, so a longer prefix costs nothing there.
+///
+/// `os` and `arch` are parameters rather than reads of `cfg!` or
+/// `std::env::consts` so that both macOS architectures can be exercised from any
+/// host. CI has no Intel macOS runner, which is how this budget came to be
+/// hardcoded to Apple Silicon's 13 in the first place.
+pub fn homebrew_prefix_for_host(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("macos", "aarch64") => Some("/opt/homebrew"),
+        // Any other macOS architecture is Intel, whose bottles are built against
+        // the shorter `/usr/local`. Assuming the tighter budget is the safe way
+        // to be wrong.
+        ("macos", _) => Some("/usr/local"),
+        _ => None,
+    }
+}
+
+/// The Homebrew prefix that a bottle carrying `tag` was built against, or `None`
+/// when the tag imposes no length constraint.
+///
+/// More precise than [`homebrew_prefix_for_host`], because it describes the
+/// bottle actually selected rather than the host it is destined for. Homebrew
+/// tags are `arm64_<codename>` for Apple Silicon, a bare `<codename>` for Intel,
+/// `<arch>_linux` for Linux, and `all` for a bottle with no architecture at all.
+pub fn homebrew_prefix_for_bottle_tag(tag: &str) -> Option<&'static str> {
+    if tag == "all" || tag.ends_with("_linux") {
+        return None;
+    }
+
+    if tag.starts_with("arm64_") {
+        Some("/opt/homebrew")
+    } else {
+        Some("/usr/local")
+    }
+}
 
 /// The Homebrew prefix that starts at `position`, if any.
 ///
@@ -257,6 +312,74 @@ mod tests {
     const NEW_PREFIX: &str = "/opt/zb";
 
     #[test]
+    fn the_host_budget_is_ten_on_intel_and_thirteen_on_apple_silicon() {
+        // The whole of issue #86: these two differ, and the old constant knew
+        // only the second one.
+        assert_eq!(
+            homebrew_prefix_for_host("macos", "x86_64").map(str::len),
+            Some(10)
+        );
+        assert_eq!(
+            homebrew_prefix_for_host("macos", "aarch64").map(str::len),
+            Some(13)
+        );
+    }
+
+    #[test]
+    fn an_unfamiliar_macos_architecture_gets_the_tighter_budget() {
+        assert_eq!(
+            homebrew_prefix_for_host("macos", "powerpc"),
+            Some("/usr/local")
+        );
+    }
+
+    #[test]
+    fn a_linux_host_has_no_prefix_length_budget() {
+        // ELF rewriting resizes the strings it patches, so length is free.
+        assert_eq!(homebrew_prefix_for_host("linux", "x86_64"), None);
+        assert_eq!(homebrew_prefix_for_host("linux", "aarch64"), None);
+    }
+
+    #[test]
+    fn bottle_tags_name_the_prefix_they_were_built_against() {
+        assert_eq!(
+            homebrew_prefix_for_bottle_tag("arm64_sonoma"),
+            Some("/opt/homebrew")
+        );
+        assert_eq!(
+            homebrew_prefix_for_bottle_tag("sonoma"),
+            Some("/usr/local")
+        );
+        assert_eq!(homebrew_prefix_for_bottle_tag("all"), None);
+    }
+
+    #[test]
+    fn an_arm64_linux_tag_is_linux_rather_than_apple_silicon() {
+        // `arm64_linux` starts with `arm64_` but is not a macOS bottle, so the
+        // Linux test has to win.
+        assert_eq!(homebrew_prefix_for_bottle_tag("arm64_linux"), None);
+        assert_eq!(homebrew_prefix_for_bottle_tag("aarch64_linux"), None);
+        assert_eq!(homebrew_prefix_for_bottle_tag("x86_64_linux"), None);
+    }
+
+    #[test]
+    fn the_default_prefix_fits_every_platform_it_ships_on() {
+        // The regression guard for issue #86. `/opt/zerobrew` was 13 and failed
+        // this on Intel; the check passed anyway because it was hardcoded to 13.
+        for (os, arch) in [("macos", "x86_64"), ("macos", "aarch64")] {
+            let budget = homebrew_prefix_for_host(os, arch)
+                .map(str::len)
+                .expect("macOS always has a budget");
+            assert!(
+                DEFAULT_MACOS_PREFIX.len() <= budget,
+                "default prefix {DEFAULT_MACOS_PREFIX} ({} chars) does not fit the \
+                 {budget}-character budget on {os}/{arch}",
+                DEFAULT_MACOS_PREFIX.len(),
+            );
+        }
+    }
+
+    #[test]
     fn homebrew_prefixes_are_rewritten_on_path_boundaries_only() {
         let rewrite = |s: &str| rewrite_homebrew_prefixes(s, NEW_PREFIX);
 
@@ -351,8 +474,11 @@ mod tests {
         assert_eq!(suggested_prefix(13, "/opt/zerobrew"), Some("/opt/zbrew"));
         assert_eq!(suggested_prefix(10, "/opt/zerobrew"), Some("/opt/zbrew"));
         assert_eq!(suggested_prefix(9, "/opt/zerobrew"), Some("/opt/zb"));
-        assert_eq!(suggested_prefix(4, "/opt/zerobrew"), Some("/zb"));
-        assert_eq!(suggested_prefix(2, "/opt/zerobrew"), None);
+        // Nothing suggestable is shorter than `/opt/zb`, so below 7 there is no
+        // advice to give rather than advice that cannot be followed.
+        assert_eq!(suggested_prefix(6, "/opt/zerobrew"), None);
+        // The prefix already in use is never suggested back to the user.
+        assert_eq!(suggested_prefix(13, DEFAULT_MACOS_PREFIX), Some("/opt/zb"));
     }
 
     const PLIST: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
