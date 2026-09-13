@@ -27,14 +27,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository == 'HernandoR/zerobrew'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # `just upstream-diff` lists commits in `upstream` that are not
           # reachable from HEAD, so the full history is required.
           fetch-depth: 0
 
       - name: install just
-        uses: extractions/setup-just@v3
+        uses: extractions/setup-just@v4
 
       - name: sync the upstream branch
         run: just upstream-sync
@@ -60,7 +60,7 @@ jobs:
 
       - name: open or update the triage issue
         if: steps.diff.outputs.count != '0'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');

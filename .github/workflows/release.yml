@@ -54,7 +54,7 @@ jobs:
             zbx_artifact_name: zbx-linux-arm64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -94,14 +94,14 @@ jobs:
           cp target/${{ matrix.target }}/release/zbx ${{ matrix.zbx_artifact_name }}
 
       - name: Upload zb binary as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}
           retention-days: 7
 
       - name: Upload zbx binary as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.zbx_artifact_name }}
           path: ${{ matrix.zbx_artifact_name }}
@@ -114,7 +114,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: assets
           pattern: "zb*-*"
@@ -127,12 +127,12 @@ jobs:
           sha256sum -- * > SHA256SUMS
 
       - name: Attest release artifacts
-        uses: actions/attest-build-provenance@v3.2.0
+        uses: actions/attest-build-provenance@v4.2.2
         with:
           subject-checksums: assets/SHA256SUMS
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: assets/*
           generate_release_notes: true

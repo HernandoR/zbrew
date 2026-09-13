@@ -63,7 +63,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.targets.outputs.include) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       
       - name: install rust ${{ matrix.rust }}
         uses: dtolnay/rust-toolchain@master
