@@ -10,7 +10,7 @@ use zb_core::Error;
 
 use super::macho::{self, Region};
 use super::relocation::{
-    HOMEBREW_PREFIXES, diagnose_skipped, entitlements_plist, homebrew_prefix_at,
+    HOMEBREW_PREFIXES, diagnose_skipped, entitlements_plist, homebrew_prefix_at, in_executable_dir,
     rewrite_homebrew_prefixes,
 };
 
@@ -180,6 +180,22 @@ fn codesign(path: &Path, entitlements: Option<&[u8]>) -> Result<(), Error> {
                 String::from_utf8_lossy(&output.stderr).trim()
             ),
         });
+    }
+
+    // Losing an entitlement is silent: the binary still runs, and only fails
+    // much later when it asks the kernel for a capability it no longer has.
+    // That is exactly how the limactl regression reached users, so say so here
+    // instead of leaving it to be discovered by a failing `colima start`.
+    //
+    // Deliberately a warning, not an error. codesign is free to re-serialise
+    // the plist, so an exact comparison is not something we can rely on, and a
+    // false positive here would turn a working install into a failed one.
+    if entitlements.is_some() && read_entitlements(path).is_none() {
+        warn!(
+            path = %path.display(),
+            "re-signing dropped this binary's entitlements; capabilities such as \
+             com.apple.security.virtualization will be unavailable"
+        );
     }
 
     Ok(())
@@ -652,15 +668,30 @@ pub fn codesign_and_strip_xattrs(keg_path: &Path) -> Result<(), Error> {
         .stderr(std::process::Stdio::null())
         .output();
 
-    // Find executables in bin/ directories only (where signing matters)
-    // Skip dylibs and other Mach-O files - they inherit signing from their loader
+    // Directly executed binaries have to carry their own valid signature.
+    // Libraries are left alone: they are validated as part of the image that
+    // loads them, and re-signing every dylib in a large keg would cost far more
+    // than it buys.
+    //
+    // `libexec` counts, not just `bin`. lima 2.x ships its
+    // Virtualization.framework driver as a separate executable at
+    // `libexec/lima/lima-driver-vz`, signed with the
+    // `com.apple.security.virtualization` entitlement; when it was skipped here
+    // it could be left unsigned, and colima's `--vm-type=vz` then fails.
     let bin_files: Vec<PathBuf> = walkdir::WalkDir::new(keg_path)
         .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| {
             let path = e.path();
-            path.is_file() && path.to_string_lossy().contains("/bin/")
+            if !path.is_file() {
+                return false;
+            }
+            // Matched against the keg-relative path, so that a prefix which
+            // happens to contain `bin` does not pull in the whole keg.
+            path.strip_prefix(keg_path)
+                .map(in_executable_dir)
+                .unwrap_or(false)
         })
         .map(|e| e.path().to_path_buf())
         .collect();

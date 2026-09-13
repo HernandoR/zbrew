@@ -223,9 +223,36 @@ fn rfind(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).rposition(|w| w == needle)
 }
 
+/// Directories inside a keg that hold binaries which are executed directly.
+///
+/// `bin` and `sbin` are the obvious ones. `libexec` matters too: Homebrew puts
+/// helper executables there, and some of them are spawned as their own process
+/// rather than loaded as a library. lima 2.x is the case that motivated this --
+/// its Virtualization.framework driver lives at `libexec/lima/lima-driver-vz`
+/// and is signed, separately from `bin/limactl`, with the
+/// `com.apple.security.virtualization` entitlement it needs in order to create
+/// a VM. A helper that cannot be re-signed is a helper that cannot run.
+pub(crate) const EXECUTABLE_DIRS: &[&str] = &["bin", "sbin", "libexec"];
+
+/// Whether `relative` -- a path relative to the keg root -- lives somewhere
+/// that holds directly executed binaries.
+///
+/// The path must be relative to the keg, not absolute: a prefix such as
+/// `/usr/local/bin/...` would otherwise match on a component that has nothing
+/// to do with the keg's own layout.
+pub(crate) fn in_executable_dir(relative: &std::path::Path) -> bool {
+    use std::path::Component;
+
+    relative.components().any(|component| match component {
+        Component::Normal(name) => EXECUTABLE_DIRS.iter().any(|dir| name == *dir),
+        _ => false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     const NEW_PREFIX: &str = "/opt/zb";
 
@@ -369,5 +396,44 @@ mod tests {
             entitlements_plist(b"<?xml version=\"1.0\"?><plist><dict><key>a</key>"),
             None
         );
+    }
+
+    #[test]
+    fn executables_are_recognised_in_bin_sbin_and_libexec() {
+        for good in [
+            "bin/limactl",
+            "sbin/daemon",
+            "libexec/lima/lima-driver-vz",
+            "libexec/helper",
+        ] {
+            assert!(
+                in_executable_dir(Path::new(good)),
+                "{good} should be treated as an executable location"
+            );
+        }
+    }
+
+    #[test]
+    fn libraries_and_data_are_not_executable_locations() {
+        for other in [
+            "lib/libfoo.dylib",
+            "share/doc/readme",
+            "include/foo.h",
+            "Frameworks/Foo.framework/Foo",
+        ] {
+            assert!(
+                !in_executable_dir(Path::new(other)),
+                "{other} should not be treated as an executable location"
+            );
+        }
+    }
+
+    /// The check runs on the keg-relative path precisely so that a prefix which
+    /// happens to contain `bin` does not drag every file in the keg into
+    /// re-signing.
+    #[test]
+    fn a_prefix_containing_bin_does_not_match_by_itself() {
+        assert!(!in_executable_dir(Path::new("lib/libfoo.dylib")));
+        assert!(in_executable_dir(Path::new("bin/foo")));
     }
 }
