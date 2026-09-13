@@ -194,3 +194,82 @@ jobs:
           # pre-release, so `releases/latest` — which install.sh downloads
           # from — keeps pointing at the last stable release.
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  update-tap:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    env:
+      # A fine-grained PAT with Contents: read and write on
+      # HernandoR/homebrew-zerobrew, and nothing else. The tap is a separate
+      # repository because `brew tap <user>/<repo>` resolves only to
+      # github.com/<user>/homebrew-<repo>, so GITHUB_TOKEN cannot reach it.
+      TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+      TAP_REPO: HernandoR/homebrew-zerobrew
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: assets
+          pattern: "zb*-*"
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum -- * > SHA256SUMS
+
+      - name: Generate formula
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/generate_formula.py \
+            --version "${GITHUB_REF_NAME#v}" \
+            --checksums assets/SHA256SUMS \
+            --output zerobrew.rb
+          echo "--- generated formula ---"
+          cat zerobrew.rb
+
+      - name: Verify the formula is valid Ruby
+        run: ruby -c zerobrew.rb
+
+      - name: Push to tap
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TAP_TOKEN}" ]]; then
+            echo "::warning::TAP_GITHUB_TOKEN is not set; skipping the tap update." \
+                 "The release itself succeeded -- update ${TAP_REPO} by hand," \
+                 "or add the secret so this runs automatically next time."
+            exit 0
+          fi
+
+          git clone --depth 1 \
+            "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+
+          mkdir -p tap/Formula
+          cp zerobrew.rb tap/Formula/zerobrew.rb
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Stage first, then compare against the index: a plain `git diff`
+          # ignores untracked files, so a tap that does not have the formula
+          # yet would look unchanged and never get its first commit.
+          git add Formula/zerobrew.rb
+          if git diff --cached --quiet -- Formula/zerobrew.rb; then
+            echo "Formula already matches ${GITHUB_REF_NAME}; nothing to push."
+            exit 0
+          fi
+
+          git commit -m "zerobrew ${GITHUB_REF_NAME#v}
+
+          Generated from HernandoR/zerobrew@${GITHUB_SHA} by the release workflow."
+          git push
