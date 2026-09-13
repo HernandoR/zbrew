@@ -1,34 +1,67 @@
 name: test
 
 on:
+  # No paths filter on push: a tag points at a commit that is already on a
+  # branch, so the push carries no changed files and a filtered workflow would
+  # never run for a release.
   push:
-    branches: [ main ]
-    paths:
-      - '**/*.rs'
-      - '**/Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/test.yml'
+    branches: [ main, 'release-*' ]
+    tags: [ 'v*', 'release-*' ]
   pull_request:
+    # `labeled` is here so that approving the macOS job with the `ci-macos`
+    # label runs it, instead of waiting for the next push.
+    types: [ opened, synchronize, reopened, labeled ]
     paths:
       - '**/*.rs'
       - '**/Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/test.yml'
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: 'Also run the macOS job'
+        type: boolean
+        default: false
 
 jobs:
+  targets:
+    name: select targets
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.select.outputs.include }}
+    steps:
+      - name: select targets
+        id: select
+        env:
+          # macOS runners bill at ten times the Linux rate, so that job is
+          # opt-in: approve it on a pull request with the `ci-macos` label, ask
+          # for it when dispatching the workflow, or push a release branch or
+          # tag, where the full matrix always runs.
+          RUN_MACOS: >-
+            ${{ startsWith(github.ref, 'refs/tags/')
+            || startsWith(github.ref_name, 'release-')
+            || startsWith(github.base_ref, 'release-')
+            || contains(github.event.pull_request.labels.*.name, 'ci-macos')
+            || inputs.macos }}
+        run: |
+          linux='{"os":"ubuntu-latest","name":"linux","rust":"1.96"}'
+          macos='{"os":"macos-latest","name":"macos-arm64","rust":"1.96"}'
+          if [ "$RUN_MACOS" = "true" ]; then
+            echo "include=[$linux,$macos]" >> "$GITHUB_OUTPUT"
+            echo 'Running linux and macos-arm64.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "include=[$linux]" >> "$GITHUB_OUTPUT"
+            echo 'Running linux only. Add the `ci-macos` label to this pull request to run the macOS job.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   test:
     name: ${{ matrix.name }} / rust ${{ matrix.rust }}
+    needs: targets
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-latest
-            name: macos-arm64
-            rust: "1.96"
-          - os: ubuntu-latest
-            name: linux
-            rust: "1.96"
+        include: ${{ fromJSON(needs.targets.outputs.include) }}
     steps:
       - uses: actions/checkout@v4
       
