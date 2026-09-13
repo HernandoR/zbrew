@@ -77,7 +77,10 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Setup Homebrew
-        uses: Homebrew/actions/setup-homebrew@master
+        # Homebrew/actions renamed its default branch from `master` to `main`,
+        # so `@master` no longer resolves and every run of this workflow failed
+        # at "Set up job" before doing any work.
+        uses: Homebrew/actions/setup-homebrew@main
 
       - name: Get Homebrew version
         id: brew-version
