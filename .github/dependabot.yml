@@ -29,3 +29,21 @@ updates:
           - "*"
     commit-message:
       prefix: "chore(ci)"
+
+  # The Eleventy site under site/ has its own pnpm lockfile. It was carrying
+  # every open Dependabot alert on this repository (55 at the time of writing,
+  # all npm, none cargo) because nothing was updating it.
+  - package-ecosystem: npm
+    directory: "/site"
+    schedule:
+      interval: weekly
+    groups:
+      site-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(site)"
