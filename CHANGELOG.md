@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A weekly `upstream sync` workflow fast-forwards the `upstream` branch from `lucasgelfond/zerobrew` and opens or updates an `upstream-triage` issue listing commits that have not been adopted here, so late activity on the unmaintained original is noticed ([#23](https://github.com/HernandoR/zerobrew/issues/23))
+
 ### Changed
+- The release workflow runs on this fork: the build job was gated to `lucasgelfond/zerobrew` and so had never produced a binary here. A tag whose name carries a pre-release suffix (`v0.3.3-rc.1`) is published as a GitHub pre-release, leaving `releases/latest` on the last stable release ([#2](https://github.com/HernandoR/zerobrew/issues/2))
+- `install.sh` clones and downloads from `HernandoR/zerobrew` instead of the upstream repository, so the installer no longer silently installs upstream's last release ([#3](https://github.com/HernandoR/zerobrew/issues/3))
+- The READMEs install from `raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh` and `brew install HernandoR/zerobrew/zerobrew`. `https://zerobrew.rs/install` still serves the upstream installer and this fork does not control that domain ([#3](https://github.com/HernandoR/zerobrew/issues/3), [#28](https://github.com/HernandoR/zerobrew/issues/28))
+- The Homebrew compatibility workflow runs on Linux only by default, matching the test workflow: the macOS entry is added when the workflow is dispatched with `macos` or when a pull request carries the `ci-macos` label ([#4](https://github.com/HernandoR/zerobrew/issues/4))
 - Bump MSRV to 1.96, required to build the latest `cargo-audit` in CI ([#393](https://github.com/lucasgelfond/zerobrew/pull/393))
 - Refresh `Cargo.lock` for audit findings: `crossbeam-epoch` (RUSTSEC-2026-0204), `quinn-proto` (RUSTSEC-2026-0185), and `anyhow` (RUSTSEC-2026-0190) ([#393](https://github.com/lucasgelfond/zerobrew/pull/393))
 - Refresh `Cargo.lock` for audit findings: `h2` 0.4.19 (RUSTSEC-2026-0258) and `chacha20` 0.10.2, replacing a yanked release ([#64](https://github.com/HernandoR/zerobrew/pull/64))
