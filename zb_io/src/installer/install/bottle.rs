@@ -74,7 +74,11 @@ impl Installer {
                     self.record_linked_files(install_name, &version, &linked_files);
                 }
                 Err(e) => {
-                    let _ = self.linker.unlink_keg(&keg_path);
+                    // `link_keg` is all-or-none: it has already rolled back any
+                    // symlink it created, so there is nothing to unlink here.
+                    // The keg stays installed-but-unlinked (and reachable via
+                    // opt/), matching Homebrew, and remains removable because it
+                    // was registered before linking.
                     report(InstallProgress::InstallCompleted {
                         name: formula_name.clone(),
                     });
