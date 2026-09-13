@@ -828,7 +828,7 @@ mod tests {
     #[test]
     fn a_path_it_cannot_shorten_is_left_intact_rather_than_truncated() {
         let original = fixture();
-        let long_prefix = "/opt/a/much/longer/zerobrew/prefix";
+        let long_prefix = "/opt/a/much/longer/zbrew/prefix";
 
         assert!(
             patch_macho_bytes(Path::new("fixture"), &original, long_prefix).is_none(),
@@ -1066,7 +1066,7 @@ Load command 14
         let pattern = format!(r"(/Cellar/{}/)([^/]+)(/)", regex::escape(pkg_name));
         let re = Regex::new(&pattern).expect("version regex should compile");
 
-        let cellar_path = "/opt/zerobrew/Cellar/mpdecimal/3.9.0/lib/libmpdec.4.dylib";
+        let cellar_path = "/opt/zbrew/Cellar/mpdecimal/3.9.0/lib/libmpdec.4.dylib";
         assert!(re.is_match(cellar_path));
 
         let replacement = format!("/Cellar/{}/{}/", pkg_name, pkg_version);
@@ -1080,13 +1080,13 @@ Load command 14
         });
         assert_eq!(
             fixed,
-            "/opt/zerobrew/Cellar/mpdecimal/4.0.1/lib/libmpdec.4.dylib"
+            "/opt/zbrew/Cellar/mpdecimal/4.0.1/lib/libmpdec.4.dylib"
         );
 
-        let opt_path = "/opt/zerobrew/opt/mpdecimal/lib/libmpdec.4.dylib";
+        let opt_path = "/opt/zbrew/opt/mpdecimal/lib/libmpdec.4.dylib";
         assert!(!re.is_match(opt_path));
 
-        let cellar_same_version = "/opt/zerobrew/Cellar/mpdecimal/4.0.1/lib/libmpdec.4.dylib";
+        let cellar_same_version = "/opt/zbrew/Cellar/mpdecimal/4.0.1/lib/libmpdec.4.dylib";
         let unchanged = re.replace(cellar_same_version, |caps: &regex::Captures| {
             let matched_version = &caps[2];
             if matched_version != pkg_version {
@@ -1114,7 +1114,7 @@ echo "Hello from $PREFIX"
 
         fs::write(&test_file, content).unwrap();
 
-        let new_prefix = "/opt/zerobrew/prefix";
+        let new_prefix = "/opt/zbrew/prefix";
         let new_cellar = format!("{}/Cellar", new_prefix);
 
         let result = patch_text_file_strings(&test_file, new_prefix, &new_cellar);
@@ -1124,9 +1124,9 @@ echo "Hello from $PREFIX"
         assert!(patched.contains(new_prefix));
         assert!(!patched.contains("/opt/homebrew"));
         assert!(!patched.contains("@@HOMEBREW_"));
-        assert!(patched.contains("/opt/zerobrew/prefix/opt/git/libexec/git-core"));
-        assert!(patched.contains("/opt/zerobrew/prefix/Cellar"));
-        assert!(patched.contains("/opt/zerobrew/prefix/Library"));
+        assert!(patched.contains("/opt/zbrew/prefix/opt/git/libexec/git-core"));
+        assert!(patched.contains("/opt/zbrew/prefix/Cellar"));
+        assert!(patched.contains("/opt/zbrew/prefix/Library"));
         assert!(patched.contains("/usr/bin/perl"));
     }
 }

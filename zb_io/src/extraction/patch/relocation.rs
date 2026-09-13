@@ -121,7 +121,7 @@ pub(crate) fn homebrew_prefix_at(
 ///
 /// The scan runs once from left to right and never re-examines what it has
 /// emitted, so a new prefix that itself lives under an old one (say
-/// `/usr/local/zerobrew`) cannot be rewritten a second time.
+/// `/usr/local/zbrew`) cannot be rewritten a second time.
 pub(crate) fn rewrite_homebrew_prefixes(text: &str, new_prefix: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = String::new();
@@ -170,18 +170,19 @@ pub(crate) struct TooLongToRewrite {
     /// A few of them, for the message.
     pub examples: Vec<String>,
     /// The tightest budget any of them imposes: the shortest Homebrew prefix
-    /// involved, which is the longest zerobrew prefix that would have fitted.
+    /// involved, which is the longest zbrew prefix that would have fitted.
     pub budget: usize,
 }
 
 /// Decide whether the strings `rewrite_strings` refused to touch are worth
 /// warning about, and which ones.
 ///
-/// Only a *longer* zerobrew prefix can make a rewrite impossible: an equal or
+/// Only a *longer* zbrew prefix can make a rewrite impossible: an equal or
 /// shorter one always fits in the space the bottle already reserved. Anything
 /// else in `skipped` is therefore not the length problem of issue #7 and is not
-/// reported as one — this is what kept the warning firing on Apple Silicon,
-/// where `/opt/homebrew` and `/opt/zerobrew` are both 13 characters long.
+/// reported as one — this is what kept the warning firing on Apple Silicon back
+/// when the default prefix was 13 characters, exactly as long as
+/// `/opt/homebrew`, so every rewrite genuinely fitted.
 pub(crate) fn diagnose_skipped(skipped: &[String], new_prefix: &str) -> Option<TooLongToRewrite> {
     let mut count = 0;
     let mut examples: Vec<String> = Vec::new();
@@ -232,7 +233,7 @@ impl TooLongToRewrite {
 
         match suggested_prefix(self.budget, new_prefix) {
             Some(shorter) => message.push_str(&format!(
-                ". Reinstalling zerobrew with a prefix of at most {} characters \
+                ". Reinstalling zbrew with a prefix of at most {} characters \
                  (for example `--prefix {shorter}`) avoids this entirely",
                 self.budget
             )),
@@ -242,7 +243,7 @@ impl TooLongToRewrite {
             )),
         }
 
-        message.push_str(". See https://github.com/HernandoR/zerobrew/issues/7");
+        message.push_str(". See https://github.com/HernandoR/zbrew/issues/7");
         message
     }
 }
@@ -311,6 +312,28 @@ mod tests {
 
     const NEW_PREFIX: &str = "/opt/zb";
 
+    /// A prefix that fits Apple Silicon's 13-character budget exactly and
+    /// overruns Intel's 10.
+    ///
+    /// Deliberately unrelated to this project's own name. These tests were once
+    /// written against the default prefix, so renaming the default silently
+    /// turned the "does not fit" fixture into one that fits and left the
+    /// assertions testing nothing.
+    const APPLE_SILICON_ONLY_PREFIX: &str = "/opt/pkgtools";
+
+    #[test]
+    fn the_fixtures_are_the_lengths_they_claim_to_be() {
+        assert_eq!(
+            APPLE_SILICON_ONLY_PREFIX.len(),
+            "/opt/homebrew".len(),
+            "the fixture has to sit exactly on the Apple Silicon budget"
+        );
+        assert!(
+            APPLE_SILICON_ONLY_PREFIX.len() > "/usr/local".len(),
+            "the fixture has to overrun the Intel budget"
+        );
+    }
+
     #[test]
     fn the_host_budget_is_ten_on_intel_and_thirteen_on_apple_silicon() {
         // The whole of issue #86: these two differ, and the old constant knew
@@ -346,10 +369,7 @@ mod tests {
             homebrew_prefix_for_bottle_tag("arm64_sonoma"),
             Some("/opt/homebrew")
         );
-        assert_eq!(
-            homebrew_prefix_for_bottle_tag("sonoma"),
-            Some("/usr/local")
-        );
+        assert_eq!(homebrew_prefix_for_bottle_tag("sonoma"), Some("/usr/local"));
         assert_eq!(homebrew_prefix_for_bottle_tag("all"), None);
     }
 
@@ -364,7 +384,7 @@ mod tests {
 
     #[test]
     fn the_default_prefix_fits_every_platform_it_ships_on() {
-        // The regression guard for issue #86. `/opt/zerobrew` was 13 and failed
+        // The regression guard for issue #86. `/opt/zbrew` was 13 and failed
         // this on Intel; the check passed anyway because it was hardcoded to 13.
         for (os, arch) in [("macos", "x86_64"), ("macos", "aarch64")] {
             let budget = homebrew_prefix_for_host(os, arch)
@@ -414,27 +434,30 @@ mod tests {
 
     #[test]
     fn an_equal_length_prefix_is_never_diagnosed_as_too_long() {
-        // Apple Silicon: /opt/homebrew and /opt/zerobrew are both 13 characters,
-        // so nothing can fail to fit and nothing should be reported.
+        // Apple Silicon: an equal-length prefix always fits the space the
+        // bottle already reserved, so nothing should be reported.
         let skipped = vec!["/opt/homebrew/opt/git/libexec/git-core".to_string()];
-        assert_eq!(diagnose_skipped(&skipped, "/opt/zerobrew"), None);
+        assert_eq!(diagnose_skipped(&skipped, APPLE_SILICON_ONLY_PREFIX), None);
+        // And a shorter one has room to spare.
+        assert_eq!(diagnose_skipped(&skipped, DEFAULT_MACOS_PREFIX), None);
         assert_eq!(diagnose_skipped(&skipped, "/opt/zb"), None);
         assert_eq!(diagnose_skipped(&[], "/opt/a/very/long/prefix"), None);
     }
 
     #[test]
     fn a_longer_prefix_is_diagnosed_with_the_tightest_budget() {
-        // Intel: /usr/local is 10 characters, /opt/zerobrew is 13.
+        // Intel: /usr/local is 10 characters, the fixture prefix is 13.
         let skipped = vec![
             "/usr/local/Cellar/gnupg/2.4.9/bin".to_string(),
             "/usr/local/Cellar/gnupg/2.4.9/libexec".to_string(),
-            // 19 characters: /opt/zerobrew fits here, so this one is not part
-            // of the length problem even though it was skipped.
+            // 19 characters: a 13-character prefix fits here, so this one is not
+            // part of the length problem even though it was skipped.
             "/usr/local/Homebrew/Library".to_string(),
             "/usr/local/Cellar/gnupg/2.4.9/lib/gnupg".to_string(),
         ];
 
-        let diagnosis = diagnose_skipped(&skipped, "/opt/zerobrew").expect("this cannot fit");
+        let diagnosis =
+            diagnose_skipped(&skipped, APPLE_SILICON_ONLY_PREFIX).expect("this cannot fit");
         assert_eq!(diagnosis.count, 3);
         assert_eq!(diagnosis.examples.len(), EXAMPLES_IN_WARNING);
         // /usr/local, not the longer /usr/local/Homebrew, sets the budget.
@@ -444,7 +467,7 @@ mod tests {
     #[test]
     fn a_path_with_no_homebrew_prefix_is_not_our_problem() {
         let skipped = vec!["/usr/local/lib/libz.dylib".to_string(), "plain".to_string()];
-        assert_eq!(diagnose_skipped(&skipped, "/opt/zerobrew"), None);
+        assert_eq!(diagnose_skipped(&skipped, "/opt/zbrew"), None);
     }
 
     #[test]
@@ -455,28 +478,37 @@ mod tests {
             "/usr/local/Cellar/gnupg/2.4.9/lib/gnupg".to_string(),
             "/usr/local/Cellar/gnupg/2.4.9/share/gnupg".to_string(),
         ];
-        let message = diagnose_skipped(&skipped, "/opt/zerobrew")
+        let binary = "/opt/pkgtools/Cellar/gnupg/2.4.9/bin/gpgconf";
+        let message = diagnose_skipped(&skipped, APPLE_SILICON_ONLY_PREFIX)
             .unwrap()
-            .message(
-                "/opt/zerobrew/Cellar/gnupg/2.4.9/bin/gpgconf",
-                "/opt/zerobrew",
-            );
+            .message(binary, APPLE_SILICON_ONLY_PREFIX);
 
-        assert!(message.contains("/opt/zerobrew/Cellar/gnupg/2.4.9/bin/gpgconf"));
+        assert!(message.contains(binary));
         assert!(message.contains("/usr/local/Cellar/gnupg/2.4.9/bin"));
         assert!(message.contains("(+1 more)"));
-        assert!(message.contains("--prefix /opt/zb"));
+        // The remedy has to fit the 10-character budget it just reported, so it
+        // is the default prefix rather than something still too long.
+        assert!(message.contains(&format!("--prefix {DEFAULT_MACOS_PREFIX}")));
         assert!(message.contains("issues/7"));
     }
 
     #[test]
     fn the_suggested_prefix_actually_fits() {
-        assert_eq!(suggested_prefix(13, "/opt/zerobrew"), Some("/opt/zbrew"));
-        assert_eq!(suggested_prefix(10, "/opt/zerobrew"), Some("/opt/zbrew"));
-        assert_eq!(suggested_prefix(9, "/opt/zerobrew"), Some("/opt/zb"));
+        assert_eq!(
+            suggested_prefix(13, APPLE_SILICON_ONLY_PREFIX),
+            Some("/opt/zbrew")
+        );
+        assert_eq!(
+            suggested_prefix(10, APPLE_SILICON_ONLY_PREFIX),
+            Some("/opt/zbrew")
+        );
+        assert_eq!(
+            suggested_prefix(9, APPLE_SILICON_ONLY_PREFIX),
+            Some("/opt/zb")
+        );
         // Nothing suggestable is shorter than `/opt/zb`, so below 7 there is no
         // advice to give rather than advice that cannot be followed.
-        assert_eq!(suggested_prefix(6, "/opt/zerobrew"), None);
+        assert_eq!(suggested_prefix(6, APPLE_SILICON_ONLY_PREFIX), None);
         // The prefix already in use is never suggested back to the user.
         assert_eq!(suggested_prefix(13, DEFAULT_MACOS_PREFIX), Some("/opt/zb"));
     }

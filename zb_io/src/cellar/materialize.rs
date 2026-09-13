@@ -467,7 +467,7 @@ mod tests {
         let version_regex = Regex::new(&version_pattern).unwrap();
 
         // Test case: path with wrong version
-        let old_path = "/opt/zerobrew/prefix/Cellar/ffmpeg/8.0.1_1/lib/libavdevice.62.dylib";
+        let old_path = "/opt/zbrew/prefix/Cellar/ffmpeg/8.0.1_1/lib/libavdevice.62.dylib";
         let replacement = format!("/{}/{}/", pkg_name, pkg_version);
 
         let fixed = version_regex.replace(old_path, |caps: &regex::Captures| {
@@ -481,11 +481,11 @@ mod tests {
 
         assert_eq!(
             fixed,
-            "/opt/zerobrew/prefix/Cellar/ffmpeg/8.0.1_2/lib/libavdevice.62.dylib"
+            "/opt/zbrew/prefix/Cellar/ffmpeg/8.0.1_2/lib/libavdevice.62.dylib"
         );
 
         // Test case: path with correct version (should not change)
-        let correct_path = "/opt/zerobrew/prefix/Cellar/ffmpeg/8.0.1_2/lib/libavdevice.62.dylib";
+        let correct_path = "/opt/zbrew/prefix/Cellar/ffmpeg/8.0.1_2/lib/libavdevice.62.dylib";
         let fixed2 = version_regex.replace(correct_path, |caps: &regex::Captures| {
             let matched_version = &caps[2];
             if matched_version != pkg_version {
@@ -498,7 +498,7 @@ mod tests {
         assert_eq!(fixed2, correct_path);
 
         // Test case: path for different package (should not change)
-        let other_path = "/opt/zerobrew/prefix/Cellar/libvpx/1.0.0/lib/libvpx.dylib";
+        let other_path = "/opt/zbrew/prefix/Cellar/libvpx/1.0.0/lib/libvpx.dylib";
         let fixed3 = version_regex.replace(other_path, |caps: &regex::Captures| {
             let matched_version = &caps[2];
             if matched_version != pkg_version {

@@ -1,54 +1,54 @@
 <div align="center">
 
-<h2>zerobrew</h2>
+<h2>zbrew</h2>
 
 <p align="center">
   <a href="README.md">English</a> ·
   <strong>中文</strong>
 </p>
 
-[![Lint](https://github.com/HernandoR/zerobrew/actions/workflows/ci.yml/badge.svg)](https://github.com/HernandoR/zerobrew/actions/workflows/ci.yml)
-[![Test](https://github.com/HernandoR/zerobrew/actions/workflows/test.yml/badge.svg)](https://github.com/HernandoR/zerobrew/actions/workflows/test.yml)
-[![Release](https://img.shields.io/github/v/release/HernandoR/zerobrew?display_name=tag)](https://github.com/HernandoR/zerobrew/releases)
+[![Lint](https://github.com/HernandoR/zbrew/actions/workflows/ci.yml/badge.svg)](https://github.com/HernandoR/zbrew/actions/workflows/ci.yml)
+[![Test](https://github.com/HernandoR/zbrew/actions/workflows/test.yml/badge.svg)](https://github.com/HernandoR/zbrew/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/HernandoR/zbrew?display_name=tag)](https://github.com/HernandoR/zbrew/releases)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/ZaPYwm9zaw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE-MIT.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE-APACHE.md)
 
-<img alt="zerobrew demo" src="./assets/zb-demo.gif" />
+<img alt="zbrew demo" src="./assets/zb-demo.gif" />
 
-<p><strong>zerobrew 为 macOS 和 Linux 上的 Homebrew 软件包带来了类似 uv 的架构。</strong></p>
+<p><strong>zbrew 为 macOS 和 Linux 上的 Homebrew 软件包带来了类似 uv 的架构。</strong></p>
 
 </div>
 
 > [!NOTE]
 > 本仓库是 [lucasgelfond/zerobrew](https://github.com/lucasgelfond/zerobrew) 的**维护分支（fork）**。
-> 原作者已将上游标记为不再维护。本分支的目标是让 zerobrew 持续可用：整理上游未关闭的 bug、
-> 合入上游未合并的修复，并保持依赖更新。规划见本仓库的 [milestones](https://github.com/HernandoR/zerobrew/milestones)，
+> 原作者已将上游标记为不再维护。本分支的目标是让 zbrew 持续可用：整理上游未关闭的 bug、
+> 合入上游未合并的修复，并保持依赖更新。规划见本仓库的 [milestones](https://github.com/HernandoR/zbrew/milestones)，
 > 实时进度见 [项目看板](https://github.com/users/HernandoR/projects/3)，其中跟踪了全部上游未关闭的 bug、功能请求和未合并的上游 PR。
-> 安全问题请在本仓库提交私密的 [security advisory](https://github.com/HernandoR/zerobrew/security/advisories/new)。
+> 安全问题请在本仓库提交私密的 [security advisory](https://github.com/HernandoR/zbrew/security/advisories/new)。
 
 ## 安装 (Install)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/HernandoR/zbrew/main/install.sh | bash
 ```
 
 安装程序会更新你的 shell 配置。完成后，重启终端，或运行它打印的 `source` 命令。
 
-> `https://zerobrew.rs/install` 提供的仍是**上游**的安装脚本，该域名不在本分支控制之下。
+> `https://zbrew.rs/install` 提供的仍是**上游**的安装脚本，该域名不在本分支控制之下。
 > 安装本分支请使用上面的地址。
 
 > [!WARNING]
 > 请**不要**从上游的 tap `lucasgelfond/homebrew-zerobrew` 安装。它仍停留在 0.1.1，落后当前版本
 > 五个发布；用它安装 `jq` 这类普通软件包时会报 `store corruption: prefix too long`。该 tap
-> 不在本分支的控制之下（[#16](https://github.com/HernandoR/zerobrew/issues/16)、
-> [#17](https://github.com/HernandoR/zerobrew/issues/17)）。请改用上面的安装脚本，或从
-> [GitHub Releases](https://github.com/HernandoR/zerobrew/releases) 下载二进制文件。
+> 不在本分支的控制之下（[#16](https://github.com/HernandoR/zbrew/issues/16)、
+> [#17](https://github.com/HernandoR/zbrew/issues/17)）。请改用上面的安装脚本，或从
+> [GitHub Releases](https://github.com/HernandoR/zbrew/releases) 下载二进制文件。
 
 或通过 Homebrew 安装（本分支自己的 tap）：
 
 ```bash
-brew install HernandoR/zerobrew/zerobrew
+brew install HernandoR/zbrew/zbrew
 ```
 
 在 Linux 上，如果系统的 glibc 低于 2.35，安装脚本会自动选择静态链接的 musl 二进制，
@@ -57,30 +57,30 @@ brew install HernandoR/zerobrew/zerobrew
 或从源码构建：
 
 ```bash
-git clone https://github.com/HernandoR/zerobrew.git
-cd zerobrew
+git clone https://github.com/HernandoR/zbrew.git
+cd zbrew
 just install            # 或：cargo install --path zb_cli --locked
 ```
 
 > 在本分支发布正式版本之前，安装脚本找不到预编译的二进制，会回退到源码构建：
 > 这需要 Rust 工具链，并且要花上几分钟。
 
-## 更新 zerobrew (Update zerobrew)
+## 更新 zbrew (Update zbrew)
 
 如果使用独立安装脚本，重新运行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/HernandoR/zbrew/main/install.sh | bash
 zb --version
 ```
 
 如果通过 Homebrew 安装：
 
 ```bash
-brew update && brew upgrade zerobrew
+brew update && brew upgrade zbrew
 ```
 
-`zb update` 只刷新软件包元数据。`zb upgrade` 升级通过 zerobrew 安装的软件包。它们都不会更新 `zb` 二进制文件本身。
+`zb update` 只刷新软件包元数据。`zb upgrade` 升级通过 zbrew 安装的软件包。它们都不会更新 `zb` 二进制文件本身。
 
 ## 快速开始 (Quick start)
 
@@ -116,7 +116,7 @@ zbx jq --version                # 在不链接的情况下运行
 
 ## 与 Homebrew 的关系 (Relationship with Homebrew)
 
-zerobrew 更像是一个针对 Homebrew 生态系统进行性能优化的客户端。我们依赖于：
+zbrew 更像是一个针对 Homebrew 生态系统进行性能优化的客户端。我们依赖于：
 - Homebrew 的 formula 定义 (homebrew-core)
 - Homebrew 提供的预构建 bottle（如果可用）
 - Homebrew 的软件包元数据和基础设施
@@ -126,21 +126,21 @@ zerobrew 更像是一个针对 Homebrew 生态系统进行性能优化的客户�
 - 用于零开销复制的 APFS clonefiles
 - 使用 Homebrew 的 Ruby DSL 的源码编译回退 (Source build fallback)
 
-zerobrew 处于实验阶段。我们建议将其与 Homebrew 并行运行，而不是作为替代品。除非您完全确定其影响，否则**不**建议清除 Homebrew 并将其替换为 zerobrew。
+zbrew 处于实验阶段。我们建议将其与 Homebrew 并行运行，而不是作为替代品。除非您完全确定其影响，否则**不**建议清除 Homebrew 并将其替换为 zbrew。
 
 ## 项目状态 (Project status)
 
 <div align="center">
-  <a href="https://star-history.dera.page/#HernandoR/zerobrew&Date">
+  <a href="https://star-history.dera.page/#HernandoR/zbrew&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=HernandoR/zerobrew&type=Date&theme=dark" />
-      <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=HernandoR/zerobrew&type=Date" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=HernandoR/zbrew&type=Date&theme=dark" />
+      <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=HernandoR/zbrew&type=Date" />
     </picture>
   </a>
 </div>
 
 - **状态：** 处于实验阶段，但对于许多常见的 Homebrew formulas 已经非常有用。
-- **反馈：** 如果遇到不兼容问题，请在[本分支提出 issue 或 PR](https://github.com/HernandoR/zerobrew/issues)。
-- **Roadmap：** [milestones](https://github.com/HernandoR/zerobrew/milestones) 与[项目看板](https://github.com/users/HernandoR/projects/3)。
+- **反馈：** 如果遇到不兼容问题，请在[本分支提出 issue 或 PR](https://github.com/HernandoR/zbrew/issues)。
+- **Roadmap：** [milestones](https://github.com/HernandoR/zbrew/milestones) 与[项目看板](https://github.com/users/HernandoR/projects/3)。
 - **同步上游：** `upstream` 分支镜像 `lucasgelfond/zerobrew:main`。运行 `just upstream-sync` 刷新，`just upstream-cherry-pick <sha>` 将单个上游提交挑入 `main`；详见 [CONTRIBUTING.md](./CONTRIBUTING.md#syncing-with-upstream)。
 - **许可证：** 根据您的选择，在 [Apache 2.0](./LICENSE-APACHE.md) 或 [MIT](./LICENSE-MIT.md) 下获得双重许可。

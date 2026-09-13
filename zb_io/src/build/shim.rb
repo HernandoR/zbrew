@@ -5,7 +5,7 @@
 # Licensed under BSD 2-Clause License (see LICENSE-HOMEBREW)
 #
 # Portions of this code implement a compatibility shim that mimics Homebrew's
-# Formula DSL and helper methods to allow Homebrew formulas to run in ZeroBrew.
+# Formula DSL and helper methods to allow Homebrew formulas to run in Zbrew.
 #
 # Homebrew Compatibility: 5.0.x
 # This shim has been tested with Homebrew 5.0.14.
@@ -19,7 +19,7 @@ require "tempfile"
 require "digest/sha2"
 require "etc"
 
-module ZeroBrewChecksum
+module ZbrewChecksum
   module_function
 
   def verify_file!(path, expected_sha256, context)
@@ -43,12 +43,12 @@ module ZeroBrewChecksum
   end
 end
 
-ZEROBREW_PREFIX = ENV.fetch("ZEROBREW_PREFIX")
-ZEROBREW_CELLAR = ENV.fetch("ZEROBREW_CELLAR")
-FORMULA_NAME = ENV.fetch("ZEROBREW_FORMULA_NAME")
-FORMULA_VERSION = ENV.fetch("ZEROBREW_FORMULA_VERSION")
-FORMULA_FILE = ENV.fetch("ZEROBREW_FORMULA_FILE")
-INSTALLED_DEPS = JSON.parse(ENV.fetch("ZEROBREW_INSTALLED_DEPS", "{}"))
+ZBREW_PREFIX = ENV.fetch("ZBREW_PREFIX")
+ZBREW_CELLAR = ENV.fetch("ZBREW_CELLAR")
+FORMULA_NAME = ENV.fetch("ZBREW_FORMULA_NAME")
+FORMULA_VERSION = ENV.fetch("ZBREW_FORMULA_VERSION")
+FORMULA_FILE = ENV.fetch("ZBREW_FORMULA_FILE")
+INSTALLED_DEPS = JSON.parse(ENV.fetch("ZBREW_INSTALLED_DEPS", "{}"))
 
 module OS
   def self.mac?
@@ -133,7 +133,7 @@ module Kernel
   # Mirrors Homebrew's Kernel#which: the first executable file named `cmd`
   # found on `path`, as a Pathname, or nil.
   def which(cmd, path = ENV.fetch("PATH", nil))
-    zerobrew_path_entries(path).each do |dir|
+    zbrew_path_entries(path).each do |dir|
       candidate = begin
         File.expand_path(cmd, dir)
       rescue ArgumentError
@@ -147,7 +147,7 @@ module Kernel
 
   # Mirrors Homebrew's Kernel#which_all: every match on `path`, deduplicated.
   def which_all(cmd, path = ENV.fetch("PATH", nil))
-    zerobrew_path_entries(path).filter_map do |dir|
+    zbrew_path_entries(path).filter_map do |dir|
       candidate = begin
         File.expand_path(cmd, dir)
       rescue ArgumentError
@@ -159,7 +159,7 @@ module Kernel
 
   private
 
-  def zerobrew_path_entries(path)
+  def zbrew_path_entries(path)
     Array(path).flat_map { |entry| entry.to_s.split(File::PATH_SEPARATOR) }.reject(&:empty?)
   end
 end
@@ -304,7 +304,7 @@ class StagedResource
         $stderr.puts "Error: failed to download resource #{@url}"
         exit 1
       end
-      ZeroBrewChecksum.verify_file!(archive, @sha256, "resource #{@url}")
+      ZbrewChecksum.verify_file!(archive, @sha256, "resource #{@url}")
       extract_resource(archive, dir)
       entries = Dir.children(dir).reject { |e| e == basename }
       src_dir = if entries.length == 1 && File.directory?(File.join(dir, entries.first))
@@ -487,7 +487,7 @@ class Formula
   def build; BuildOptions.new; end
 
   def prefix
-    Pathname.new(ZEROBREW_CELLAR) + name + version
+    Pathname.new(ZBREW_CELLAR) + name + version
   end
 
   def bin; prefix + "bin"; end
@@ -511,7 +511,7 @@ class Formula
   def frameworks; prefix + "Frameworks"; end
   def kext; prefix + "Library" + "Extensions"; end
 
-  def opt_prefix; Pathname.new(ZEROBREW_PREFIX) + "opt" + name; end
+  def opt_prefix; Pathname.new(ZBREW_PREFIX) + "opt" + name; end
   def opt_bin; opt_prefix + "bin"; end
   def opt_sbin; opt_prefix + "sbin"; end
   def opt_lib; opt_prefix + "lib"; end
@@ -531,11 +531,11 @@ class Formula
   end
 
   def etc
-    Pathname.new(ZEROBREW_PREFIX) + "etc"
+    Pathname.new(ZBREW_PREFIX) + "etc"
   end
 
   def var
-    Pathname.new(ZEROBREW_PREFIX) + "var"
+    Pathname.new(ZBREW_PREFIX) + "var"
   end
 
   def buildpath
@@ -615,8 +615,8 @@ class FormulaRef
 
   def opt_prefix
     dep_info = INSTALLED_DEPS[@name]
-    return Pathname.new(ZEROBREW_PREFIX) + "opt" + @name if dep_info
-    Pathname.new(ZEROBREW_PREFIX) + "opt" + @name
+    return Pathname.new(ZBREW_PREFIX) + "opt" + @name if dep_info
+    Pathname.new(ZBREW_PREFIX) + "opt" + @name
   end
 
   def opt_lib; opt_prefix + "lib"; end
@@ -682,8 +682,8 @@ formula_raw = File.read(FORMULA_FILE)
 end_marker_idx = formula_raw.index(/^__END__\s*$/)
 FORMULA_DATA_CONTENT = end_marker_idx ? formula_raw[(formula_raw.index("\n", end_marker_idx) + 1)..] : nil
 
-ENV["HOMEBREW_PREFIX"] = ZEROBREW_PREFIX
-ENV["HOMEBREW_CELLAR"] = ZEROBREW_CELLAR
+ENV["HOMEBREW_PREFIX"] = ZBREW_PREFIX
+ENV["HOMEBREW_CELLAR"] = ZBREW_CELLAR
 
 load FORMULA_FILE
 
@@ -715,7 +715,7 @@ patches.each do |p|
         $stderr.puts "Error: failed to download patch #{p[:url]}"
         exit 1
       end
-      ZeroBrewChecksum.verify_file!(tmp.path, p[:sha256], "patch #{p[:url]}")
+      ZbrewChecksum.verify_file!(tmp.path, p[:sha256], "patch #{p[:url]}")
       Kernel.system("patch", strip_flag, "-i", tmp.path)
       unless $?.success?
         $stderr.puts "Error: patch failed"

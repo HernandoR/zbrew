@@ -28,7 +28,7 @@ jobs:
   build:
     name: Build ${{ matrix.artifact_name }}
     runs-on: ${{ matrix.os }}
-    if: github.repository == 'HernandoR/zerobrew'
+    if: github.repository == 'HernandoR/zbrew'
     strategy:
       fail-fast: false
       matrix:
@@ -202,7 +202,7 @@ jobs:
             ## Install
 
             ```sh
-            curl -fsSL https://raw.githubusercontent.com/HernandoR/zerobrew/main/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/HernandoR/zbrew/main/install.sh | bash
             ```
 
             This is the recommended route. It picks the right binary for your
@@ -213,7 +213,7 @@ jobs:
             Or with Homebrew, from this fork's tap:
 
             ```sh
-            brew install HernandoR/zerobrew/zerobrew
+            brew install HernandoR/zbrew/zbrew
             ```
 
             ### Downloading a binary from this page
@@ -244,11 +244,11 @@ jobs:
       contents: read
     env:
       # A fine-grained PAT with Contents: read and write on
-      # HernandoR/homebrew-zerobrew, and nothing else. The tap is a separate
+      # HernandoR/homebrew-zbrew, and nothing else. The tap is a separate
       # repository because `brew tap <user>/<repo>` resolves only to
       # github.com/<user>/homebrew-<repo>, so GITHUB_TOKEN cannot reach it.
       TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-      TAP_REPO: HernandoR/homebrew-zerobrew
+      TAP_REPO: HernandoR/homebrew-zbrew
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -272,12 +272,12 @@ jobs:
           python3 .github/scripts/generate_formula.py \
             --version "${GITHUB_REF_NAME#v}" \
             --checksums assets/SHA256SUMS \
-            --output zerobrew.rb
+            --output zbrew.rb
           echo "--- generated formula ---"
-          cat zerobrew.rb
+          cat zbrew.rb
 
       - name: Verify the formula is valid Ruby
-        run: ruby -c zerobrew.rb
+        run: ruby -c zbrew.rb
 
       - name: Push to tap
         run: |
@@ -294,7 +294,7 @@ jobs:
             "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
 
           mkdir -p tap/Formula
-          cp zerobrew.rb tap/Formula/zerobrew.rb
+          cp zbrew.rb tap/Formula/zbrew.rb
 
           cd tap
           git config user.name "github-actions[bot]"
@@ -303,13 +303,13 @@ jobs:
           # Stage first, then compare against the index: a plain `git diff`
           # ignores untracked files, so a tap that does not have the formula
           # yet would look unchanged and never get its first commit.
-          git add Formula/zerobrew.rb
-          if git diff --cached --quiet -- Formula/zerobrew.rb; then
+          git add Formula/zbrew.rb
+          if git diff --cached --quiet -- Formula/zbrew.rb; then
             echo "Formula already matches ${GITHUB_REF_NAME}; nothing to push."
             exit 0
           fi
 
-          git commit -m "zerobrew ${GITHUB_REF_NAME#v}
+          git commit -m "zbrew ${GITHUB_REF_NAME#v}
 
-          Generated from HernandoR/zerobrew@${GITHUB_SHA} by the release workflow."
+          Generated from HernandoR/zbrew@${GITHUB_SHA} by the release workflow."
           git push

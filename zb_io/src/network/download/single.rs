@@ -68,7 +68,7 @@ impl Downloader {
         let tls_config = shared_tls_config();
 
         let client = reqwest::Client::builder()
-            .user_agent("zerobrew/0.1")
+            .user_agent("zbrew/0.1")
             .use_preconfigured_tls((*tls_config).clone())
             .pool_max_idle_per_host(10)
             .tcp_nodelay(true)
@@ -92,7 +92,7 @@ impl Downloader {
 
     fn create_isolated_client(&self) -> reqwest::Client {
         reqwest::Client::builder()
-            .user_agent("zerobrew/0.1")
+            .user_agent("zbrew/0.1")
             .use_preconfigured_tls((*self.tls_config).clone())
             .pool_max_idle_per_host(0)
             .tcp_nodelay(true)

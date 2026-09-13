@@ -39,7 +39,7 @@ impl BuildExecutor {
         )
         .await?;
 
-        let shim_path = work_dir.join("zerobrew_shim.rb");
+        let shim_path = work_dir.join("zbrew_shim.rb");
         fs::write(&shim_path, SHIM_RUBY)
             .await
             .map_err(Error::file("failed to write ruby shim"))?;
@@ -50,12 +50,12 @@ impl BuildExecutor {
 
         let mut env = build_env(plan, &self.prefix);
         env.insert(
-            "ZEROBREW_FORMULA_FILE".into(),
+            "ZBREW_FORMULA_FILE".into(),
             formula_rb_path.display().to_string(),
         );
 
         let deps_json = serde_json::to_string(installed_deps).unwrap_or_else(|_| "{}".into());
-        env.insert("ZEROBREW_INSTALLED_DEPS".into(), deps_json);
+        env.insert("ZBREW_INSTALLED_DEPS".into(), deps_json);
 
         let ruby = find_ruby().await?;
         run_build(&ruby, &shim_path, &source_root, &env).await?;
@@ -218,15 +218,15 @@ end
         std::fs::create_dir_all(&cellar).unwrap();
 
         let mut env = HashMap::new();
-        env.insert("ZEROBREW_PREFIX".to_string(), prefix.display().to_string());
-        env.insert("ZEROBREW_CELLAR".to_string(), cellar.display().to_string());
-        env.insert("ZEROBREW_FORMULA_NAME".to_string(), "foo".to_string());
-        env.insert("ZEROBREW_FORMULA_VERSION".to_string(), "1.0.0".to_string());
+        env.insert("ZBREW_PREFIX".to_string(), prefix.display().to_string());
+        env.insert("ZBREW_CELLAR".to_string(), cellar.display().to_string());
+        env.insert("ZBREW_FORMULA_NAME".to_string(), "foo".to_string());
+        env.insert("ZBREW_FORMULA_VERSION".to_string(), "1.0.0".to_string());
         env.insert(
-            "ZEROBREW_FORMULA_FILE".to_string(),
+            "ZBREW_FORMULA_FILE".to_string(),
             formula_path.display().to_string(),
         );
-        env.insert("ZEROBREW_INSTALLED_DEPS".to_string(), "{}".to_string());
+        env.insert("ZBREW_INSTALLED_DEPS".to_string(), "{}".to_string());
 
         run_build(&ruby, &shim_path, &source_root, &env)
             .await
@@ -274,15 +274,15 @@ end
         std::fs::create_dir_all(&cellar).unwrap();
 
         let mut env = HashMap::new();
-        env.insert("ZEROBREW_PREFIX".to_string(), prefix.display().to_string());
-        env.insert("ZEROBREW_CELLAR".to_string(), cellar.display().to_string());
-        env.insert("ZEROBREW_FORMULA_NAME".to_string(), "foo".to_string());
-        env.insert("ZEROBREW_FORMULA_VERSION".to_string(), "1.0.0".to_string());
+        env.insert("ZBREW_PREFIX".to_string(), prefix.display().to_string());
+        env.insert("ZBREW_CELLAR".to_string(), cellar.display().to_string());
+        env.insert("ZBREW_FORMULA_NAME".to_string(), "foo".to_string());
+        env.insert("ZBREW_FORMULA_VERSION".to_string(), "1.0.0".to_string());
         env.insert(
-            "ZEROBREW_FORMULA_FILE".to_string(),
+            "ZBREW_FORMULA_FILE".to_string(),
             formula_path.display().to_string(),
         );
-        env.insert("ZEROBREW_INSTALLED_DEPS".to_string(), "{}".to_string());
+        env.insert("ZBREW_INSTALLED_DEPS".to_string(), "{}".to_string());
 
         let err = run_build(&ruby, &shim_path, &source_root, &env)
             .await
@@ -329,15 +329,15 @@ end
         std::fs::create_dir_all(&cellar).unwrap();
 
         let mut env = HashMap::new();
-        env.insert("ZEROBREW_PREFIX".to_string(), prefix.display().to_string());
-        env.insert("ZEROBREW_CELLAR".to_string(), cellar.display().to_string());
-        env.insert("ZEROBREW_FORMULA_NAME".to_string(), "foo".to_string());
-        env.insert("ZEROBREW_FORMULA_VERSION".to_string(), "1.0.0".to_string());
+        env.insert("ZBREW_PREFIX".to_string(), prefix.display().to_string());
+        env.insert("ZBREW_CELLAR".to_string(), cellar.display().to_string());
+        env.insert("ZBREW_FORMULA_NAME".to_string(), "foo".to_string());
+        env.insert("ZBREW_FORMULA_VERSION".to_string(), "1.0.0".to_string());
         env.insert(
-            "ZEROBREW_FORMULA_FILE".to_string(),
+            "ZBREW_FORMULA_FILE".to_string(),
             formula_path.display().to_string(),
         );
-        env.insert("ZEROBREW_INSTALLED_DEPS".to_string(), "{}".to_string());
+        env.insert("ZBREW_INSTALLED_DEPS".to_string(), "{}".to_string());
 
         run_build(ruby, &shim_path, source_root, &env).await
     }

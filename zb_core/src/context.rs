@@ -76,7 +76,7 @@ pub struct Context {
 impl Context {
     pub fn from_defaults() -> Self {
         Self {
-            paths: Paths::from_root(PathBuf::from("/opt/zerobrew")),
+            paths: Paths::from_root(PathBuf::from("/opt/zbrew")),
             concurrency: ConcurrencyLimits::default(),
             logger: LoggerHandle::default(),
         }
@@ -91,26 +91,26 @@ mod tests {
     fn from_defaults_sets_expected_paths() {
         let context = Context::from_defaults();
 
-        assert_eq!(context.paths.root, PathBuf::from("/opt/zerobrew"));
+        assert_eq!(context.paths.root, PathBuf::from("/opt/zbrew"));
         assert_eq!(
             context.paths.store,
-            PathBuf::from("/opt/zerobrew").join("store")
+            PathBuf::from("/opt/zbrew").join("store")
         );
         assert_eq!(
             context.paths.cellar,
-            PathBuf::from("/opt/zerobrew").join("cellar")
+            PathBuf::from("/opt/zbrew").join("cellar")
         );
         assert_eq!(
             context.paths.cache,
-            PathBuf::from("/opt/zerobrew").join("cache")
+            PathBuf::from("/opt/zbrew").join("cache")
         );
         assert_eq!(
             context.paths.db,
-            PathBuf::from("/opt/zerobrew").join("db").join("zb.sqlite3")
+            PathBuf::from("/opt/zbrew").join("db").join("zb.sqlite3")
         );
         assert_eq!(
             context.paths.locks,
-            PathBuf::from("/opt/zerobrew").join("locks")
+            PathBuf::from("/opt/zbrew").join("locks")
         );
     }
 }

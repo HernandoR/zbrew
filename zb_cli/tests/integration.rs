@@ -29,11 +29,11 @@ impl TestEnv {
     fn zb(&self, args: &[&str]) -> Output {
         let zb = env!("CARGO_BIN_EXE_zb");
         Command::new(zb)
-            .env("ZEROBREW_ROOT", self.root.path())
+            .env("ZBREW_ROOT", self.root.path())
             // Use the short prefix so Mach-O patching stays within the 13-char limit,
-            // and prevent a host-level ZEROBREW_PREFIX from leaking into the test.
-            .env("ZEROBREW_PREFIX", self.prefix())
-            .env("ZEROBREW_AUTO_INIT", "true")
+            // and prevent a host-level ZBREW_PREFIX from leaking into the test.
+            .env("ZBREW_PREFIX", self.prefix())
+            .env("ZBREW_AUTO_INIT", "true")
             .args(args)
             .output()
             .unwrap_or_else(|_| panic!("failed to execute {zb} command"))
@@ -290,11 +290,11 @@ fn test_gc_removes_unused_store_entries() {
 fn reset_refuses_dangerous_root_and_prefix() {
     let zb = env!("CARGO_BIN_EXE_zb");
 
-    for dangerous in ["/", "/zzz-zerobrew-guard-test"] {
+    for dangerous in ["/", "/zzz-zbrew-guard-test"] {
         let output = Command::new(zb)
-            .env("ZEROBREW_ROOT", dangerous)
-            .env("ZEROBREW_PREFIX", dangerous)
-            .env("ZEROBREW_AUTO_INIT", "true")
+            .env("ZBREW_ROOT", dangerous)
+            .env("ZBREW_PREFIX", dangerous)
+            .env("ZBREW_AUTO_INIT", "true")
             .args(["reset", "--yes"])
             .output()
             .unwrap_or_else(|e| panic!("failed to execute {zb}: {e}"));

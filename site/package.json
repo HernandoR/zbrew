@@ -5,7 +5,7 @@
   "scripts": {
     "build": "eleventy",
     "dev": "eleventy --serve",
-    "deploy": "wrangler pages deploy _site --project-name zerobrew-site"
+    "deploy": "wrangler pages deploy _site --project-name zbrew-site"
   },
   "packageManager": "pnpm@10.29.1",
   "dependencies": {

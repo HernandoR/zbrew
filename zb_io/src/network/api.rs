@@ -101,7 +101,7 @@ impl ApiClient {
         }
         if !parsed.username().is_empty() || parsed.password().is_some() {
             return Err(Error::InvalidArgument {
-                message: "Bad ZEROBREW_API_URL configuration".to_string(),
+                message: "Bad ZBREW_API_URL configuration".to_string(),
             });
         }
 
@@ -110,7 +110,7 @@ impl ApiClient {
 
     fn build_client(base_url: String) -> Self {
         let client = reqwest::Client::builder()
-            .user_agent("zerobrew/0.1")
+            .user_agent("zbrew/0.1")
             .pool_max_idle_per_host(20)
             .use_preconfigured_tls((*crate::network::tls::shared_tls_config()).clone())
             .build()

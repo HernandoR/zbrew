@@ -639,7 +639,7 @@ mod tests {
 
         let report = rewrite_strings(&mut image, &regions, |s| {
             s.strip_prefix("/opt/homebrew")
-                .map(|rest| format!("/a/much/longer/zerobrew/prefix{rest}"))
+                .map(|rest| format!("/a/much/longer/zbrew/prefix{rest}"))
         });
 
         assert_eq!(report.patched, 0);
@@ -664,11 +664,11 @@ mod tests {
 
         let report = rewrite_strings(&mut image, &regions, |s| {
             s.strip_prefix("/opt/homebrew")
-                .map(|rest| format!("/opt/zerobrew{rest}"))
+                .map(|rest| format!("/opt/zbrew{rest}"))
         });
 
         assert_eq!(report.patched, 1);
-        assert!(find(&image, b"/opt/zerobrew/lib\0").is_some());
+        assert!(find(&image, b"/opt/zbrew/lib\0").is_some());
     }
 
     fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {

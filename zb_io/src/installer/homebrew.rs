@@ -98,7 +98,7 @@ pub fn categorize_packages(packages: Vec<HomebrewPackage>) -> HomebrewMigrationP
 
 /// Get all installed Homebrew packages, categorized for migration
 ///
-/// Only formulas from `homebrew/core` can be migrated to zerobrew.
+/// Only formulas from `homebrew/core` can be migrated to zbrew.
 /// Formulas from other taps and all casks are collected separately.
 /// Only leaves are migrated, as there's no use to reinstalling dependencies.
 pub fn get_homebrew_packages() -> Result<HomebrewMigrationPackages, Error> {

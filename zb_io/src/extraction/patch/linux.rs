@@ -89,9 +89,9 @@ fn rewrite_homebrew_prefixes(input: &str, prefix_dir: &Path) -> String {
         .replace(LINUX_HOMEBREW_PREFIX, &prefix_str)
 }
 
-/// Detect if zerobrew has installed its own glibc and return the path to its ld.so interpreter.
-/// Returns None if zerobrew's glibc is not found, indicating we should use the system ld.so.
-fn detect_zerobrew_glibc(prefix_dir: &Path) -> Option<PathBuf> {
+/// Detect if zbrew has installed its own glibc and return the path to its ld.so interpreter.
+/// Returns None if zbrew's glibc is not found, indicating we should use the system ld.so.
+fn detect_zbrew_glibc(prefix_dir: &Path) -> Option<PathBuf> {
     let cellar = prefix_dir.join("Cellar").join("glibc");
 
     if !cellar.exists() {
@@ -193,13 +193,13 @@ fn find_system_ld_so() -> Option<PathBuf> {
 fn patch_elf_placeholders(keg_path: &Path, prefix_dir: &Path) -> Result<usize, Error> {
     let lib_path = prefix_dir.join("lib").to_string_lossy().to_string();
 
-    // Detect if zerobrew has installed its own glibc
-    let zerobrew_interpreter = detect_zerobrew_glibc(prefix_dir);
+    // Detect if zbrew has installed its own glibc
+    let zbrew_interpreter = detect_zbrew_glibc(prefix_dir);
 
     // Determine which interpreter to use:
-    // - If zerobrew has glibc, use zerobrew's ld.so
+    // - If zbrew has glibc, use zbrew's ld.so
     // - Otherwise, use the system ld.so (fallback)
-    let target_interpreter = if let Some(ref zb_ld) = zerobrew_interpreter {
+    let target_interpreter = if let Some(ref zb_ld) = zbrew_interpreter {
         Some(zb_ld.clone())
     } else {
         // Find system ld.so - common paths for Linux
@@ -699,7 +699,7 @@ int value() { Box<int> b{1}; return b.get() + helper(2); }
         let prefix = tmp.path().join("prefix");
 
         // Test 1: No glibc installed - should return None
-        assert!(detect_zerobrew_glibc(&prefix).is_none());
+        assert!(detect_zbrew_glibc(&prefix).is_none());
 
         // Test 2: Create a mock glibc installation
         let glibc_dir = prefix.join("Cellar/glibc/2.38");
@@ -711,7 +711,7 @@ int value() { Box<int> b{1}; return b.get() + helper(2); }
         fs::write(&ld_so, "mock").unwrap();
 
         // Should now detect the glibc
-        let detected = detect_zerobrew_glibc(&prefix);
+        let detected = detect_zbrew_glibc(&prefix);
         assert!(detected.is_some());
         assert_eq!(detected.unwrap(), ld_so);
 
@@ -722,7 +722,7 @@ int value() { Box<int> b{1}; return b.get() + helper(2); }
         let ld_so_newer = lib_dir_newer.join("ld-linux-x86-64.so.2");
         fs::write(&ld_so_newer, "mock").unwrap();
 
-        let detected = detect_zerobrew_glibc(&prefix);
+        let detected = detect_zbrew_glibc(&prefix);
         assert!(detected.is_some());
         assert_eq!(detected.unwrap(), ld_so_newer);
     }

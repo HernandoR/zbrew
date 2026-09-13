@@ -108,7 +108,7 @@ pub async fn execute(
 }
 
 fn detect_runtime_prefix(bin_path: &Path) -> Option<PathBuf> {
-    let env_prefix = std::env::var("ZEROBREW_PREFIX").ok();
+    let env_prefix = std::env::var("ZBREW_PREFIX").ok();
     detect_runtime_prefix_with_env(bin_path, env_prefix.as_deref())
 }
 
@@ -232,7 +232,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -311,7 +311,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -365,7 +365,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -416,15 +416,15 @@ mod tests {
 
     #[test]
     fn detect_runtime_prefix_from_cellar_path() {
-        let bin_path = PathBuf::from("/opt/zerobrew/prefix/Cellar/foo/1.0.0/bin/foo");
+        let bin_path = PathBuf::from("/opt/zbrew/prefix/Cellar/foo/1.0.0/bin/foo");
         let detected = detect_runtime_prefix_with_env(&bin_path, None);
-        assert_eq!(detected, Some(PathBuf::from("/opt/zerobrew/prefix")));
+        assert_eq!(detected, Some(PathBuf::from("/opt/zbrew/prefix")));
     }
 
     #[test]
     fn detect_runtime_prefix_from_lowercase_cellar_path() {
-        let bin_path = PathBuf::from("/opt/zerobrew/cellar/foo/1.0.0/bin/foo");
+        let bin_path = PathBuf::from("/opt/zbrew/cellar/foo/1.0.0/bin/foo");
         let detected = detect_runtime_prefix_with_env(&bin_path, None);
-        assert_eq!(detected, Some(PathBuf::from("/opt/zerobrew")));
+        assert_eq!(detected, Some(PathBuf::from("/opt/zbrew")));
     }
 }

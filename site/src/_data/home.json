@@ -1,6 +1,6 @@
 {
   "hero": {
-    "brand": "Zerobrew",
+    "brand": "Zbrew",
     "line1Suffix": "is a drop-in replacement",
     "line2Prefix": "for Homebrew, achieving",
     "line2Highlight": "20x/5x",
@@ -16,14 +16,14 @@
     },
     "summaryCards": [
       {
-        "title": "Why zerobrew",
-        "body": "zerobrew keeps the Homebrew workflow familiar, but makes installs faster and the overall setup simpler to reason about.",
+        "title": "Why zbrew",
+        "body": "zbrew keeps the Homebrew workflow familiar, but makes installs faster and the overall setup simpler to reason about.",
         "ctaLabel": "See the repository",
         "href": "/github"
       },
       {
         "title": "Get started",
-        "body": "Join the community if you want help getting set up, migrating over, or figuring out the right zerobrew workflow for your setup.",
+        "body": "Join the community if you want help getting set up, migrating over, or figuring out the right zbrew workflow for your setup.",
         "ctaLabel": "Join the Discord",
         "href": "/discord"
       }

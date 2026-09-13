@@ -14,7 +14,7 @@ pub fn execute(
 ) -> Result<(), zb_core::Error> {
     // `reset` recursively deletes the contents of both directories and may fall
     // back to `sudo rm -rf`. Both values come from --root/--prefix or the
-    // ZEROBREW_ROOT/ZEROBREW_PREFIX environment variables, so a stale or
+    // ZBREW_ROOT/ZBREW_PREFIX environment variables, so a stale or
     // mistyped value would otherwise be wiped without question.
     validate_destructive_path(root)?;
     validate_destructive_path(prefix)?;
@@ -26,7 +26,7 @@ pub fn execute(
     }
 
     if !yes {
-        ui.note("This will delete all zerobrew data at:")
+        ui.note("This will delete all zbrew data at:")
             .map_err(ui_error)?;
         ui.bullet(root.display()).map_err(ui_error)?;
         ui.bullet(prefix.display()).map_err(ui_error)?;

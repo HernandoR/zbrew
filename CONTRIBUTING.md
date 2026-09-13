@@ -1,10 +1,10 @@
-# Contributing to zerobrew
+# Contributing to zbrew
 
-Thanks for your interest in contributing to zerobrew! This document provides guidelines for contributing to the project.
+Thanks for your interest in contributing to zbrew! This document provides guidelines for contributing to the project.
 
 ## Licensing
 
-By contributing to zerobrew, you agree your contributions will be dual-licensed under either [Apache](./LICENSE-APACHE.md) OR [MIT](./LICENSE-MIT.md), at the licensee's choice.
+By contributing to zbrew, you agree your contributions will be dual-licensed under either [Apache](./LICENSE-APACHE.md) OR [MIT](./LICENSE-MIT.md), at the licensee's choice.
 
 ## Soft Prerequisites
 
@@ -17,7 +17,7 @@ cannot accept or tolerate PRs with no clear guidance or thought put into them.
 
 **_Please understand_** that we reserve the right to simply close your PR if it exhibits clear indicators 
 of heavy LLM usage. We understand you are excited to contribute but the code must reach a level of quality
-that's typically achieved through thoughtful engagement in the community and the issues/agenda of zerobrew- NOT
+that's typically achieved through thoughtful engagement in the community and the issues/agenda of zbrew- NOT
 by throwing a prompt into an LLM and opening a PR with no direction.
 
 If you ever need help or want to walk through an issue or idea that you have with one of the maintainers, feel free to join 
@@ -25,7 +25,7 @@ the [community discord](https://discord.gg/TVatsQBFJt); we would be more than ha
 
 ## Project Structure
 
-zerobrew is organized as a Cargo workspace with three crates:
+zbrew is organized as a Cargo workspace with three crates:
 
 - `zb_core`: Core data models and domain logic (formula resolution, bottle selection)
 - `zb_io`: I/O operations (API client, downloads, extraction, installation)
@@ -70,8 +70,8 @@ out in the Discord to give us a heads up or open an issue first to discuss your 
 This project includes a `Justfile`, Install [just](https://github.com/casey/just) and use these commands instead of `cargo` (for ease of development):
 
 - `just build` Check formatting, lint, then build the binary (Builds debug binary)
-- `just install` Build and install zb to $HOME/.local/bin (Customizable with `$ZEROBREW_BIN`)
-- `just uninstall` Remove all zerobrew installations and configurations
+- `just install` Build and install zb to $HOME/.local/bin (Customizable with `$ZBREW_BIN`)
+- `just uninstall` Remove all zbrew installations and configurations
 - `just fmt` Format code with rustfmt
 - `just fmt-check` Check code formatting
 - `just lint` Run clippy with strict warnings
@@ -125,7 +125,7 @@ To benchmark performance:
 just bench --full
 ```
 
-This runs a 100-package installation suite comparing zerobrew to Homebrew. This is especially crucial to run if you are 
+This runs a 100-package installation suite comparing zbrew to Homebrew. This is especially crucial to run if you are 
 planning on contributing to performance/optimization related changes.
 
 Useful options:
@@ -160,7 +160,7 @@ For further questions, open an issue on GitHub.
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds every
 target, publishes the GitHub release, and then regenerates the formula in the
-[`HernandoR/homebrew-zerobrew`](https://github.com/HernandoR/homebrew-zerobrew)
+[`HernandoR/homebrew-zbrew`](https://github.com/HernandoR/homebrew-zbrew)
 tap.
 
 The tap has to be a separate repository because `brew tap <user>/<repo>`
@@ -177,7 +177,7 @@ This needs one repository secret:
 
 | Secret | Value |
 | --- | --- |
-| `TAP_GITHUB_TOKEN` | A fine-grained PAT scoped to `HernandoR/homebrew-zerobrew` with **Contents: read and write**, and no other permission or repository. |
+| `TAP_GITHUB_TOKEN` | A fine-grained PAT scoped to `HernandoR/homebrew-zbrew` with **Contents: read and write**, and no other permission or repository. |
 
 `GITHUB_TOKEN` cannot be used: it is scoped to this repository and cannot push
 to the tap. When the secret is absent the release still succeeds and the job
@@ -215,6 +215,6 @@ gh pr checkout <number> -R lucasgelfond/zerobrew -b adopt/pr-<number>
 ```
 
 Every open upstream issue and adoptable upstream PR has a tracking issue in this
-repository (label `upstream-pr` for PRs), grouped into [milestones](https://github.com/HernandoR/zerobrew/milestones) and shown on the
+repository (label `upstream-pr` for PRs), grouped into [milestones](https://github.com/HernandoR/zbrew/milestones) and shown on the
 [project board](https://github.com/users/HernandoR/projects/3). Reference both the tracking issue and the upstream number in
 the commit message (for example `Upstream: lucasgelfond/zerobrew#393`) so the board stays traceable.

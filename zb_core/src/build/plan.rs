@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn detects_cmake_from_build_deps() {
         let f = test_formula("libheif", "https://example.com/src.tar.gz", &["cmake"]);
-        let prefix = PathBuf::from("/opt/zerobrew");
+        let prefix = PathBuf::from("/opt/zbrew");
         let plan = BuildPlan::from_formula(&f, &prefix).unwrap();
         assert_eq!(plan.detected_system, BuildSystem::Cmake);
     }
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn detects_meson_from_build_deps() {
         let f = test_formula("glib", "https://example.com/src.tar.xz", &["meson"]);
-        let prefix = PathBuf::from("/opt/zerobrew");
+        let prefix = PathBuf::from("/opt/zbrew");
         let plan = BuildPlan::from_formula(&f, &prefix).unwrap();
         assert_eq!(plan.detected_system, BuildSystem::Meson);
     }
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn detects_autoconf_from_tarball_url() {
         let f = test_formula("wget", "https://ftp.gnu.org/wget-1.25.tar.gz", &["pkgconf"]);
-        let prefix = PathBuf::from("/opt/zerobrew");
+        let prefix = PathBuf::from("/opt/zbrew");
         let plan = BuildPlan::from_formula(&f, &prefix).unwrap();
         assert_eq!(plan.detected_system, BuildSystem::Autoconf);
     }
@@ -147,18 +147,18 @@ mod tests {
     fn returns_none_without_source_url() {
         let mut f = test_formula("wget", "https://example.com/src.tar.gz", &[]);
         f.urls = None;
-        let prefix = PathBuf::from("/opt/zerobrew");
+        let prefix = PathBuf::from("/opt/zbrew");
         assert!(BuildPlan::from_formula(&f, &prefix).is_none());
     }
 
     #[test]
     fn cellar_path_includes_version() {
         let f = test_formula("wget", "https://example.com/src.tar.gz", &[]);
-        let prefix = PathBuf::from("/opt/zerobrew");
+        let prefix = PathBuf::from("/opt/zbrew");
         let plan = BuildPlan::from_formula(&f, &prefix).unwrap();
         assert_eq!(
             plan.cellar_path,
-            PathBuf::from("/opt/zerobrew/Cellar/wget/1.0.0")
+            PathBuf::from("/opt/zbrew/Cellar/wget/1.0.0")
         );
     }
 }

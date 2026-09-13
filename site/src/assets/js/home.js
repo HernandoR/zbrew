@@ -1,5 +1,5 @@
 const installPanel = document.querySelector('.install-panel');
-const storedTabKey = 'zerobrew-install-tab';
+const storedTabKey = 'zbrew-install-tab';
 
 if (installPanel) {
   const tabs = Array.from(installPanel.querySelectorAll('.install-tab'));
