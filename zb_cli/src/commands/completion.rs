@@ -4,7 +4,7 @@ use std::io;
 
 #[derive(Parser)]
 #[command(name = "zb")]
-#[command(about = "Zerobrew - A fast Homebrew-compatible package installer")]
+#[command(about = "Zbrew - A fast Homebrew-compatible package installer")]
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]

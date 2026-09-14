@@ -2,15 +2,15 @@
 
 ## Supported Versions
 
-We take security seriously and provide security updates for the latest version zerobrew.
-We strongly recommend keeping your zerobrew dependencies up to date.
+We take security seriously and provide security updates for the latest version zbrew.
+We strongly recommend keeping your zbrew dependencies up to date.
 
 ## Reporting a Vulnerability
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-If you discover a security vulnerability in zerobrew or any of the related crates, please report it privately using
-[GitHub's private security advisory feature](https://github.com/HernandoR/zerobrew/security/advisories/new) on this repository.
+If you discover a security vulnerability in zbrew or any of the related crates, please report it privately using
+[GitHub's private security advisory feature](https://github.com/HernandoR/zbrew/security/advisories/new) on this repository.
 
 Please include the following information in your report:
 
@@ -22,7 +22,7 @@ Please include the following information in your report:
 
 ### What constitutes a security vulnerability?
 
-For zerobrew, security vulnerabilities may include but are not limited to:
+For zbrew, security vulnerabilities may include but are not limited to:
 
 - **Package substitution**: Ability to install malicious packages by manipulating formula resolution or tap priority
 - **Privilege escalation**: Unauthorized access to system directories or operations that should require elevated permissions
@@ -37,7 +37,7 @@ For zerobrew, security vulnerabilities may include but are not limited to:
 - **Dependency confusion**: Installing malicious packages by exploiting tap resolution order or dependency specifications
 - **Supply chain attacks**: Compromised taps or formula sources serving backdoored bottles
 - **Arbitrary code execution**: Malicious bottles containing executables that run with user privileges during installation
-- **Dependency vulnerabilities**: Security issues in upstream crates (reqwest, tokio, tar, etc.) that affect zerobrew
+- **Dependency vulnerabilities**: Security issues in upstream crates (reqwest, tokio, tar, etc.) that affect zbrew
 
 For the CLI specifically:
 - **Command injection**: Malicious formula names or tap references that could execute unintended shell commands
@@ -66,13 +66,13 @@ We request that you:
 Published security advisories will be available through:
 
 - GitHub Security Advisories on the
-  [zerobrew repository](https://github.com/HernandoR/zerobrew/security/advisories)
+  [zbrew repository](https://github.com/HernandoR/zbrew/security/advisories)
 - [RustSec Advisory Database](https://rustsec.org/)
 - Release notes and changelog entries
 
 ## Recognition
 
-We appreciate the security research community's efforts to improve the security of zerobrew. With
+We appreciate the security research community's efforts to improve the security of zbrew. With
 your permission, we will acknowledge your contribution in:
 
 - Security advisories
@@ -83,7 +83,7 @@ If you prefer to remain anonymous, please let us know in your report.
 
 ## Scope
 
-This security policy covers zerobrew wholly.
+This security policy covers zbrew wholly.
 
 ## Additional Resources
 
@@ -91,4 +91,4 @@ This security policy covers zerobrew wholly.
 - [Code of Conduct](https://www.rust-lang.org/policies/code-of-conduct)
 - [Rust Security Policy](https://www.rust-lang.org/policies/security)
 
-Thank you for helping to keep zerobrew and the Rust ecosystem secure!
+Thank you for helping to keep zbrew and the Rust ecosystem secure!

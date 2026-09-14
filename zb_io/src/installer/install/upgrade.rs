@@ -204,7 +204,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         let mut installer = make_installer(&root, &prefix, &mock_server.uri());
 
@@ -298,7 +298,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         let mut installer = make_installer(&root, &prefix, &mock_server.uri());
 
@@ -384,7 +384,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         let mut installer = make_installer(&root, &prefix, &mock_server.uri());
 
@@ -436,7 +436,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         let mut installer = make_installer(&root, &prefix, &mock_server.uri());
 
@@ -462,7 +462,7 @@ mod tests {
     async fn upgrade_errors_when_not_installed() {
         let mock_server = MockServer::start().await;
         let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         let mut installer = make_installer(&root, &prefix, &mock_server.uri());
 
@@ -520,7 +520,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         let mut installer = make_installer(&root, &prefix, &mock_server.uri());
 

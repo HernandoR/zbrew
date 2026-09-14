@@ -335,7 +335,7 @@ pub fn create_installer(
     let api_cache =
         ApiCache::open(&api_cache_path).map_err(Error::store("failed to open API cache"))?;
 
-    let api_client = match std::env::var("ZEROBREW_API_URL") {
+    let api_client = match std::env::var("ZBREW_API_URL") {
         Ok(url) => ApiClient::with_base_url(url)?,
         Err(_) => ApiClient::new(),
     }
@@ -514,7 +514,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -600,7 +600,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -713,7 +713,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -791,7 +791,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -864,7 +864,7 @@ end
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -978,7 +978,7 @@ end
                 .await;
         }
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -1062,7 +1062,7 @@ end
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -1151,7 +1151,7 @@ end
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -1246,7 +1246,7 @@ end
                 .await;
         }
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 

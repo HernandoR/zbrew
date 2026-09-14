@@ -1,6 +1,6 @@
 use console::style;
 use std::path::{Path, PathBuf};
-use zb_io::Installer;
+use zb_io::{DEFAULT_MACOS_PREFIX, Installer};
 
 pub fn normalize_formula_name(name: &str) -> Result<String, zb_core::Error> {
     let trimmed = name.trim();
@@ -50,7 +50,7 @@ pub fn format_formula_suggestions(requested: &str, suggestions: &[String]) -> Op
     }
 
     if let Some(top_suggestion) = suggestions.first() {
-        rendered.push_str("\n      Try installing the closest match with zerobrew:\n");
+        rendered.push_str("\n      Try installing the closest match with zbrew:\n");
         rendered.push_str(&format!(
             "      {}\n",
             style(format!("zb install {top_suggestion}")).cyan()
@@ -85,7 +85,7 @@ pub async fn suggest_missing_formula_matches(
 pub fn suggest_homebrew(formula: &str, error: &zb_core::Error) {
     eprintln!();
     eprintln!(
-        "{} This package can't be installed with zerobrew.",
+        "{} This package can't be installed with zbrew.",
         style("Note:").yellow().bold()
     );
     eprintln!("      Error: {}", error);
@@ -124,17 +124,14 @@ pub fn get_root_path(cli_root: Option<PathBuf>) -> PathBuf {
         return root;
     }
 
-    if let Ok(env_root) = std::env::var("ZEROBREW_ROOT") {
+    if let Ok(env_root) = std::env::var("ZBREW_ROOT") {
         return PathBuf::from(env_root);
     }
 
-    let legacy_root = PathBuf::from("/opt/zerobrew");
-    if legacy_root.exists() {
-        return legacy_root;
-    }
+    let macos_root = PathBuf::from(DEFAULT_MACOS_PREFIX);
 
     if cfg!(target_os = "macos") {
-        legacy_root
+        macos_root
     } else {
         let xdg_data_home = std::env::var("XDG_DATA_HOME")
             .ok()
@@ -142,9 +139,9 @@ pub fn get_root_path(cli_root: Option<PathBuf>) -> PathBuf {
             .unwrap_or_else(|| {
                 std::env::var("HOME")
                     .map(|h| PathBuf::from(h).join(".local").join("share"))
-                    .unwrap_or_else(|_| legacy_root.clone())
+                    .unwrap_or_else(|_| macos_root.clone())
             });
-        xdg_data_home.join("zerobrew")
+        xdg_data_home.join("zbrew")
     }
 }
 
@@ -153,7 +150,7 @@ pub fn get_prefix_path(cli_prefix: Option<PathBuf>, root: &Path) -> PathBuf {
         return prefix;
     }
 
-    let env_prefix = std::env::var_os("ZEROBREW_PREFIX").map(PathBuf::from);
+    let env_prefix = std::env::var_os("ZBREW_PREFIX").map(PathBuf::from);
     get_prefix_path_for_os(env_prefix, root, cfg!(target_os = "macos"))
 }
 
@@ -199,14 +196,14 @@ mod tests {
 
     #[test]
     fn macos_default_prefix_is_root() {
-        let root = PathBuf::from("/opt/zerobrew");
+        let root = PathBuf::from("/opt/zbrew");
 
         assert_eq!(get_prefix_path_for_os(None, &root, true), root);
     }
 
     #[test]
     fn linux_default_prefix_is_root_prefix() {
-        let root = PathBuf::from("/home/user/.local/share/zerobrew");
+        let root = PathBuf::from("/home/user/.local/share/zbrew");
 
         assert_eq!(
             get_prefix_path_for_os(None, &root, false),
@@ -216,7 +213,7 @@ mod tests {
 
     #[test]
     fn macos_ignores_legacy_root_prefix_env_default() {
-        let root = PathBuf::from("/opt/zerobrew");
+        let root = PathBuf::from("/opt/zbrew");
 
         assert_eq!(
             get_prefix_path_for_os(Some(root.join("prefix")), &root, true),
@@ -226,7 +223,7 @@ mod tests {
 
     #[test]
     fn macos_keeps_custom_env_prefix() {
-        let root = PathBuf::from("/opt/zerobrew");
+        let root = PathBuf::from("/opt/zbrew");
         let custom = PathBuf::from("/zb");
 
         assert_eq!(
@@ -237,7 +234,7 @@ mod tests {
 
     #[test]
     fn linux_keeps_env_prefix() {
-        let root = PathBuf::from("/home/user/.local/share/zerobrew");
+        let root = PathBuf::from("/home/user/.local/share/zbrew");
         let env_prefix = PathBuf::from("/tmp/zb-prefix");
 
         assert_eq!(
@@ -304,7 +301,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -336,7 +333,7 @@ mod tests {
     #[tokio::test]
     async fn suggest_missing_formula_matches_returns_false_for_non_missing_errors() {
         let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 

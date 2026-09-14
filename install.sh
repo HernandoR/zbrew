@@ -55,40 +55,42 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ZEROBREW_REPO="https://github.com/HernandoR/zerobrew.git"
-: "${ZEROBREW_DIR:=$HOME/.zerobrew}"
-: "${ZEROBREW_BIN:=$HOME/.local/bin}"
+ZBREW_REPO="https://github.com/HernandoR/zbrew.git"
+: "${ZBREW_DIR:=$HOME/.zbrew}"
+: "${ZBREW_BIN:=$HOME/.local/bin}"
 ORIGINAL_PATH="$PATH"
 PREVIOUS_ZB_VERSION=""
 
-if [[ -d "/opt/zerobrew" ]]; then
-    ZEROBREW_ROOT="/opt/zerobrew"
-elif [[ "$(uname -s)" == "Darwin" ]]; then
-    ZEROBREW_ROOT="/opt/zerobrew"
+# Mirrors get_root_path in zb_cli. A directory that merely happens to exist
+# under /opt does not select the root: on Linux that let a stray /opt/zbrew
+# override the XDG location that `zb` would pick on its own, so the two
+# disagreed about where the install lived.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    ZBREW_ROOT="/opt/zbrew"
 else
     XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
-    ZEROBREW_ROOT="$XDG_DATA_HOME/zerobrew"
+    ZBREW_ROOT="$XDG_DATA_HOME/zbrew"
 fi
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-    : "${ZEROBREW_PREFIX:=$ZEROBREW_ROOT}"
+    : "${ZBREW_PREFIX:=$ZBREW_ROOT}"
 else
-    : "${ZEROBREW_PREFIX:=$ZEROBREW_ROOT/prefix}"
+    : "${ZBREW_PREFIX:=$ZBREW_ROOT/prefix}"
 fi
 
-export ZEROBREW_ROOT
-export ZEROBREW_PREFIX
+export ZBREW_ROOT
+export ZBREW_PREFIX
 
-# Ensure system tools are used instead of zerobrew-installed ones.
-# A prior `zb init` adds $ZEROBREW_PREFIX/bin to PATH, which can cause
-# zerobrew's curl/git (linked against zerobrew's OpenSSL) to be used by
+# Ensure system tools are used instead of zbrew-installed ones.
+# A prior `zb init` adds $ZBREW_PREFIX/bin to PATH, which can cause
+# zbrew's curl/git (linked against zbrew's OpenSSL) to be used by
 # this script. On some macOS versions that leads to dyld symbol errors.
 # see https://github.com/lucasgelfond/zerobrew/issues/288
 sanitized_path=""
 IFS=':' read -ra _path_parts <<< "$PATH"
 for _p in "${_path_parts[@]}"; do
     case "$_p" in
-        "$ZEROBREW_PREFIX"/bin|"$ZEROBREW_ROOT"/bin) ;;
+        "$ZBREW_PREFIX"/bin|"$ZBREW_ROOT"/bin) ;;
         *) sanitized_path="${sanitized_path:+$sanitized_path:}$_p" ;;
     esac
 done
@@ -110,7 +112,7 @@ usage() {
     printf "\n"
     printf "Options:\n"
     printf "    -h, --help               %bDisplay this help message%b\n" "$MUTED" "$NC"
-    printf "    -b, --binary <path>...   %bInstalls binaries (zb, zbx) to \$ZEROBREW_BIN%b\n" "$MUTED" "$NC"
+    printf "    -b, --binary <path>...   %bInstalls binaries (zb, zbx) to \$ZBREW_BIN%b\n" "$MUTED" "$NC"
     printf "        --no-modify-path     %bDon't modify shell config files (.zshrc, .bashrc, etc.)%b\n" "$MUTED" "$NC"
     printf "\n"
     printf "Examples:%b\n" "$MUTED"
@@ -159,11 +161,11 @@ zb_version() {
 }
 
 detect_existing_zb() {
-    PREVIOUS_ZB_VERSION="$(zb_version "$ZEROBREW_BIN/zb")"
+    PREVIOUS_ZB_VERSION="$(zb_version "$ZBREW_BIN/zb")"
 }
 
 report_zb_version() {
-    local installed_zb="$ZEROBREW_BIN/zb"
+    local installed_zb="$ZBREW_BIN/zb"
     local installed_version
     installed_version="$(zb_version "$installed_zb")"
 
@@ -176,7 +178,7 @@ report_zb_version() {
     elif [[ "$PREVIOUS_ZB_VERSION" == "$installed_version" ]]; then
         completed "${ORANGE}${installed_version}${NC} is already up to date"
     else
-        completed "Updated zerobrew from ${ORANGE}${PREVIOUS_ZB_VERSION}${NC} to ${ORANGE}${installed_version}${NC}"
+        completed "Updated zbrew from ${ORANGE}${PREVIOUS_ZB_VERSION}${NC} to ${ORANGE}${installed_version}${NC}"
     fi
 
     local current_path_zb
@@ -237,23 +239,23 @@ zb_init() {
         init_args+=("--no-modify-path")
     fi
 
-    "$zb_path" init ${init_args[@]+"${init_args[@]}"} || error_exit "Failed to initialize zerobrew"
+    "$zb_path" init ${init_args[@]+"${init_args[@]}"} || error_exit "Failed to initialize zbrew"
 }
 
 finalize_installation() {
     local no_modify="$1"
 
     # Verify the binary works
-    if ! "$ZEROBREW_BIN/zb" --version >/dev/null 2>&1; then
+    if ! "$ZBREW_BIN/zb" --version >/dev/null 2>&1; then
         error_exit "Installation succeeded but binary does not execute properly"
     fi
 
     # Add zb to PATH for current session if not already present
-    if [[ ":$PATH:" != *":$ZEROBREW_BIN:"* ]]; then
-        export PATH="$ZEROBREW_BIN:$PATH"
+    if [[ ":$PATH:" != *":$ZBREW_BIN:"* ]]; then
+        export PATH="$ZBREW_BIN:$PATH"
     fi
 
-    zb_init "$ZEROBREW_BIN/zb" "$no_modify"
+    zb_init "$ZBREW_BIN/zb" "$no_modify"
     report_zb_version
 
     print_logo
@@ -263,7 +265,7 @@ finalize_installation() {
 # The glibc Linux release binaries are built on ubuntu-22.04, so they need
 # glibc 2.35 or newer. Older distributions and containers (Google Colab, for
 # example) must use the statically linked musl build instead.
-# see https://github.com/HernandoR/zerobrew/issues/10
+# see https://github.com/HernandoR/zbrew/issues/10
 GLIBC_MIN_MINOR=35
 
 glibc_is_new_enough() {
@@ -338,7 +340,7 @@ download_release_binary() {
     local output_name="$2"
     local required="${3:-true}"
     local downloaded_path="$DOWNLOAD_TEMP_DIR/${output_name}"
-    local download_url="https://github.com/HernandoR/zerobrew/releases/latest/download/${asset_name}"
+    local download_url="https://github.com/HernandoR/zbrew/releases/latest/download/${asset_name}"
 
     (
         curl -fsL --retry 3 --retry-delay 1 --connect-timeout 10 \
@@ -420,7 +422,7 @@ try_release_install() {
         binaries_to_install+=("$DOWNLOADED_ZBX_PATH")
     fi
 
-    install_bin "$ZEROBREW_BIN" "${binaries_to_install[@]}"
+    install_bin "$ZBREW_BIN" "${binaries_to_install[@]}"
     finalize_installation "$no_modify_path"
     return 0
 }
@@ -432,10 +434,10 @@ print_logo() {
     printf "%b▄██▄▄ ██▄▄▄ ██ ██ ▀███▀%b ██▄█▀ ██ ██ ██▄▄▄  ▀█▀█▀ \n" "$NC" "$ORANGE"
     printf "\n"
 
-    printf "%bStart installing %bPackages%b with %bzerobrew%b:\n\n" "$MUTED" "$NC" "$MUTED" "$ORANGE" "$NC"
+    printf "%bStart installing %bPackages%b with %bzbrew%b:\n\n" "$MUTED" "$NC" "$MUTED" "$ORANGE" "$NC"
     printf "  zb install %bffmpeg%b    # Install a Package%b\n" "$ORANGE" "$MUTED" "$NC"
     printf "  zbx %byetris%b           # Single-time Run%b\n\n" "$ORANGE" "$MUTED" "$NC"
-    printf "%bFor more information visit %bhttps://zerobrew.rs/docs\n\n" "$MUTED" "$NC"
+    printf "%bFor more information visit %bhttps://zbrew.rs/docs\n\n" "$MUTED" "$NC"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -470,7 +472,7 @@ detect_existing_zb
 
 # Skip all if binary path is provided
 if [[ ${#binary_paths[@]} -gt 0 ]]; then
-    install_bin "$ZEROBREW_BIN" "${binary_paths[@]}"
+    install_bin "$ZBREW_BIN" "${binary_paths[@]}"
     finalize_installation "$no_modify_path"
     exit 0
 fi
@@ -507,9 +509,9 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 # Clone or update repo
-if [[ -d "$ZEROBREW_DIR" ]]; then
+if [[ -d "$ZBREW_DIR" ]]; then
     (
-        cd "$ZEROBREW_DIR" || exit 1
+        cd "$ZBREW_DIR" || exit 1
         if ! git fetch --depth=1 origin main >/dev/null 2>&1; then
             printf "Failed to fetch updates\n" >&2
             exit 1
@@ -519,28 +521,28 @@ if [[ -d "$ZEROBREW_DIR" ]]; then
             exit 1
         fi
     ) &
-    if ! spinner "Updating ${ORANGE}zerobrew${NC} repository" $!; then
-        error_exit "Failed to update zerobrew repository. Check your network connection and permissions."
+    if ! spinner "Updating ${ORANGE}zbrew${NC} repository" $!; then
+        error_exit "Failed to update zbrew repository. Check your network connection and permissions."
     fi
-    completed "Updated ${ORANGE}zerobrew${NC} repository"
-    cd "$ZEROBREW_DIR" || error_exit "Failed to enter directory: $ZEROBREW_DIR"
+    completed "Updated ${ORANGE}zbrew${NC} repository"
+    cd "$ZBREW_DIR" || error_exit "Failed to enter directory: $ZBREW_DIR"
 else
     (
-        if ! git clone --depth 1 "$ZEROBREW_REPO" "$ZEROBREW_DIR" >/dev/null 2>&1; then
+        if ! git clone --depth 1 "$ZBREW_REPO" "$ZBREW_DIR" >/dev/null 2>&1; then
             printf "Failed to clone repository\n" >&2
             exit 1
         fi
     ) &
-    if ! spinner "Cloning ${ORANGE}zerobrew${NC} repository" $!; then
-        error_exit "Failed to clone zerobrew repository. Check your network connection and that the repository exists."
+    if ! spinner "Cloning ${ORANGE}zbrew${NC} repository" $!; then
+        error_exit "Failed to clone zbrew repository. Check your network connection and that the repository exists."
     fi
-    completed "Cloned ${ORANGE}zerobrew${NC} repository"
-    cd "$ZEROBREW_DIR" || error_exit "Failed to enter directory: $ZEROBREW_DIR"
+    completed "Cloned ${ORANGE}zbrew${NC} repository"
+    cd "$ZBREW_DIR" || error_exit "Failed to enter directory: $ZBREW_DIR"
 fi
 
 # Build
-if [[ -d "$ZEROBREW_PREFIX/lib/pkgconfig" ]]; then
-    export PKG_CONFIG_PATH="$ZEROBREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+if [[ -d "$ZBREW_PREFIX/lib/pkgconfig" ]]; then
+    export PKG_CONFIG_PATH="$ZBREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 fi
 if [[ -d "/opt/homebrew/lib/pkgconfig" ]] && [[ ! "${PKG_CONFIG_PATH:-}" =~ "/opt/homebrew/lib/pkgconfig" ]]; then
     export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
@@ -554,10 +556,10 @@ BUILD_OUTPUT=$(mktemp)
         exit 1
     fi
 ) &
-if ! spinner "Building ${ORANGE}zerobrew${NC}" $!; then
-    error_exit "Failed to build zerobrew. Run 'cargo build --release --bin zb --bin zbx' to see details."
+if ! spinner "Building ${ORANGE}zbrew${NC}" $!; then
+    error_exit "Failed to build zbrew. Run 'cargo build --release --bin zb --bin zbx' to see details."
 fi
-completed "Built ${ORANGE}zerobrew${NC}"
+completed "Built ${ORANGE}zbrew${NC}"
 
 # Parse cargo's JSON output to find the actual binary paths
 # This handles custom CARGO_TARGET_DIR, .cargo/config.toml target-dir, etc.
@@ -588,5 +590,5 @@ if [[ -z "$ZBX_PATH" || ! -f "$ZBX_PATH" ]]; then
     error_exit "Build succeeded but could not locate zbx binary. Check cargo configuration."
 fi
 
-install_bin "$ZEROBREW_BIN" "$ZB_PATH" "$ZBX_PATH"
+install_bin "$ZBREW_BIN" "$ZB_PATH" "$ZBX_PATH"
 finalize_installation "$no_modify_path"

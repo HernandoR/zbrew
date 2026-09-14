@@ -1,7 +1,7 @@
 //! Smoke tests that verify the Homebrew API still returns the expected schema.
 //! These hit the real network and should run on a schedule (nightly CI), not on every PR.
 //!
-//! If these tests fail, the Homebrew API has changed and zerobrew needs updating.
+//! If these tests fail, the Homebrew API has changed and zbrew needs updating.
 
 use std::time::Duration;
 
@@ -73,7 +73,7 @@ async fn homebrew_api_404_for_nonexistent_formula() {
         .build()
         .unwrap();
     let resp = client
-        .get("https://formulae.brew.sh/api/formula/this-formula-does-not-exist-zerobrew-test.json")
+        .get("https://formulae.brew.sh/api/formula/this-formula-does-not-exist-zbrew-test.json")
         .send()
         .await
         .expect("failed to reach Homebrew API");

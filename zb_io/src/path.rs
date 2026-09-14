@@ -85,15 +85,15 @@ const PROTECTED_DIRS: &[&str] = &[
 ];
 
 /// Minimum number of non-root components a directory must have before we are
-/// willing to delete it recursively. `/opt/zerobrew` (2) is acceptable;
+/// willing to delete it recursively. `/opt/zbrew` (2) is acceptable;
 /// `/usr` (1) and `/` (0) are not.
 const MIN_DESTRUCTIVE_DEPTH: usize = 2;
 
 /// Validate that `path` is safe to delete recursively.
 ///
 /// This guards operations that wipe a whole directory tree (`zb reset`).
-/// The root and prefix come from `--root`/`--prefix` and the `ZEROBREW_ROOT`/
-/// `ZEROBREW_PREFIX` environment variables, so without this check a stale or
+/// The root and prefix come from `--root`/`--prefix` and the `ZBREW_ROOT`/
+/// `ZBREW_PREFIX` environment variables, so without this check a stale or
 /// mistyped value is taken at face value and its entire contents deleted.
 ///
 /// On top of [`validate_privileged_path`] this requires the path to be
@@ -178,12 +178,12 @@ mod tests {
 
     #[test]
     fn accepts_normal_absolute_path() {
-        assert!(validate_privileged_path(Path::new("/opt/zerobrew")).is_ok());
+        assert!(validate_privileged_path(Path::new("/opt/zbrew")).is_ok());
     }
 
     #[test]
     fn accepts_normal_relative_path() {
-        assert!(validate_privileged_path(Path::new("zerobrew/store")).is_ok());
+        assert!(validate_privileged_path(Path::new("zbrew/store")).is_ok());
     }
 
     #[test]
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn rejects_trailing_dotdot() {
-        let err = validate_privileged_path(Path::new("/opt/zerobrew/..")).unwrap_err();
+        let err = validate_privileged_path(Path::new("/opt/zbrew/..")).unwrap_err();
         assert!(err.to_string().contains("'..'"));
     }
 
@@ -284,13 +284,13 @@ mod tests {
 
     #[test]
     fn destructive_rejects_relative_path() {
-        let err = validate_destructive_path(Path::new("zerobrew/store")).unwrap_err();
+        let err = validate_destructive_path(Path::new("zbrew/store")).unwrap_err();
         assert!(err.to_string().contains("relative"), "{err}");
     }
 
     #[test]
     fn destructive_rejects_shallow_path() {
-        let err = validate_destructive_path(Path::new("/zerobrew")).unwrap_err();
+        let err = validate_destructive_path(Path::new("/zbrew")).unwrap_err();
         assert!(err.to_string().contains("refusing"), "{err}");
     }
 
@@ -306,7 +306,7 @@ mod tests {
         let home = Path::new("/home/someuser");
         assert!(
             validate_destructive_path_with_home(
-                Path::new("/home/someuser/.local/share/zerobrew"),
+                Path::new("/home/someuser/.local/share/zbrew"),
                 Some(home)
             )
             .is_ok()
@@ -314,11 +314,11 @@ mod tests {
     }
 
     #[test]
-    fn destructive_accepts_normal_zerobrew_roots() {
+    fn destructive_accepts_normal_zbrew_roots() {
         for good in [
-            "/opt/zerobrew",
-            "/opt/zerobrew/prefix",
-            "/home/someuser/.local/share/zerobrew",
+            "/opt/zbrew",
+            "/opt/zbrew/prefix",
+            "/home/someuser/.local/share/zbrew",
         ] {
             assert!(
                 validate_destructive_path_with_home(Path::new(good), None).is_ok(),

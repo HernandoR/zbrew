@@ -66,7 +66,7 @@ impl Database {
             return Err(Error::StoreCorruption {
                 message: format!(
                     "database schema version {} is newer than supported version {}. \
-                     Please upgrade zerobrew",
+                     Please upgrade zbrew",
                     current_version,
                     Self::SCHEMA_VERSION
                 ),
@@ -545,7 +545,7 @@ mod tests {
                 "foo",
                 "1.0.0",
                 "/opt/homebrew/bin/foo",
-                "/opt/zerobrew/cellar/foo/1.0.0/bin/foo",
+                "/opt/zbrew/cellar/foo/1.0.0/bin/foo",
             )
             .unwrap();
             tx.commit().unwrap();

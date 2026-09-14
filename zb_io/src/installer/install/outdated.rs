@@ -170,7 +170,7 @@ mod tests {
     async fn test_installer() -> (Installer, MockServer, TempDir) {
         let mock_server = MockServer::start().await;
         let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 
@@ -212,7 +212,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let root = tmp.path().join("zerobrew");
+        let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
         fs::create_dir_all(root.join("db")).unwrap();
 

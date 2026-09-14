@@ -52,13 +52,13 @@ pub fn build_env(plan: &BuildPlan, prefix: &Path) -> HashMap<String, String> {
         prefix.join("Cellar").display().to_string(),
     );
 
-    env.insert("ZEROBREW_PREFIX".into(), prefix.display().to_string());
+    env.insert("ZBREW_PREFIX".into(), prefix.display().to_string());
     env.insert(
-        "ZEROBREW_CELLAR".into(),
+        "ZBREW_CELLAR".into(),
         prefix.join("Cellar").display().to_string(),
     );
-    env.insert("ZEROBREW_FORMULA_NAME".into(), plan.formula_name.clone());
-    env.insert("ZEROBREW_FORMULA_VERSION".into(), plan.version.clone());
+    env.insert("ZBREW_FORMULA_NAME".into(), plan.formula_name.clone());
+    env.insert("ZBREW_FORMULA_VERSION".into(), plan.version.clone());
 
     env.insert("MAKEFLAGS".into(), format!("-j{}", num_cpus()));
 
@@ -97,8 +97,8 @@ mod tests {
             build_dependencies: Vec::new(),
             runtime_dependencies: Vec::new(),
             detected_system: BuildSystem::Autoconf,
-            prefix: PathBuf::from("/opt/zerobrew/prefix"),
-            cellar_path: PathBuf::from("/opt/zerobrew/cellar/test/1.0.0"),
+            prefix: PathBuf::from("/opt/zbrew/prefix"),
+            cellar_path: PathBuf::from("/opt/zbrew/cellar/test/1.0.0"),
         }
     }
 
@@ -106,7 +106,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn build_env_includes_macosx_deployment_target() {
         let plan = test_plan();
-        let env = build_env(&plan, &PathBuf::from("/opt/zerobrew/prefix"));
+        let env = build_env(&plan, &PathBuf::from("/opt/zbrew/prefix"));
         assert!(env.contains_key("MACOSX_DEPLOYMENT_TARGET"));
         let target = &env["MACOSX_DEPLOYMENT_TARGET"];
         assert!(
@@ -118,9 +118,9 @@ mod tests {
     #[test]
     fn build_env_includes_standard_vars() {
         let plan = test_plan();
-        let env = build_env(&plan, &PathBuf::from("/opt/zerobrew/prefix"));
-        assert!(env.contains_key("ZEROBREW_PREFIX"));
-        assert!(env.contains_key("ZEROBREW_FORMULA_NAME"));
+        let env = build_env(&plan, &PathBuf::from("/opt/zbrew/prefix"));
+        assert!(env.contains_key("ZBREW_PREFIX"));
+        assert!(env.contains_key("ZBREW_FORMULA_NAME"));
         assert!(env.contains_key("MAKEFLAGS"));
     }
 }

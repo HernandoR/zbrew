@@ -89,13 +89,13 @@ jobs:
           echo "version=$version" >> $GITHUB_OUTPUT
           echo "Homebrew version: $version"
 
-      - name: Build zerobrew
+      - name: Build zbrew
         run: cargo build --release
 
-      - name: Install zerobrew
+      - name: Install zbrew
         run: cargo install --force --path zb_cli
 
-      - name: Initialize zerobrew
+      - name: Initialize zbrew
         run: zb init
 
       - name: Test common formulas

@@ -3,16 +3,13 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "zb")]
-#[command(about = "Zerobrew - A fast Homebrew-compatible package installer")]
+#[command(about = "Zbrew - A fast Homebrew-compatible package installer")]
 #[command(version)]
 pub struct Cli {
-    #[arg(long, env = "ZEROBREW_ROOT", help = "Path to zerobrew data directory")]
+    #[arg(long, env = "ZBREW_ROOT", help = "Path to zbrew data directory")]
     pub root: Option<PathBuf>,
 
-    #[arg(
-        long,
-        help = "Path to Homebrew-style prefix (overrides ZEROBREW_PREFIX)"
-    )]
+    #[arg(long, help = "Path to Homebrew-style prefix (overrides ZBREW_PREFIX)")]
     pub prefix: Option<PathBuf>,
 
     #[arg(
@@ -26,7 +23,7 @@ pub struct Cli {
     #[arg(
         long = "auto-init",
         global = true,
-        env = "ZEROBREW_AUTO_INIT",
+        env = "ZBREW_AUTO_INIT",
         help = "Automatically initialize without prompting"
     )]
     pub auto_init: bool,
@@ -152,12 +149,12 @@ pub enum Commands {
     },
     /// Remove unreferenced store entries
     Gc,
-    /// Reset zerobrew data directories
+    /// Reset zbrew data directories
     Reset {
         #[arg(long, short = 'y', help = "Skip confirmation prompts")]
         yes: bool,
     },
-    /// Initialize zerobrew directories
+    /// Initialize zbrew directories
     Init {
         #[arg(long, help = "Do not modify shell configuration files")]
         no_modify_path: bool,

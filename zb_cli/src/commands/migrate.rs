@@ -32,7 +32,7 @@ pub async fn execute(
     ui.blank_line().map_err(ui_error)?;
 
     if !packages.non_core_formulas.is_empty() {
-        ui.note("Formulas from non-core taps cannot be migrated to zerobrew:")
+        ui.note("Formulas from non-core taps cannot be migrated to zbrew:")
             .map_err(ui_error)?;
         for pkg in &packages.non_core_formulas {
             ui.bullet(format!("{} ({})", pkg.name, pkg.tap))
@@ -42,7 +42,7 @@ pub async fn execute(
     }
 
     if !packages.casks.is_empty() {
-        ui.note("Casks cannot be migrated to zerobrew (only CLI formulas are supported):")
+        ui.note("Casks cannot be migrated to zbrew (only CLI formulas are supported):")
             .map_err(ui_error)?;
         for cask in &packages.casks {
             ui.bullet(&cask.name).map_err(ui_error)?;
@@ -77,7 +77,7 @@ pub async fn execute(
 
     ui.blank_line().map_err(ui_error)?;
     ui.heading(format!(
-        "Migrating {} formulas to zerobrew...",
+        "Migrating {} formulas to zbrew...",
         style(packages.formulas.len()).green().bold()
     ))
     .map_err(ui_error)?;
@@ -116,7 +116,7 @@ pub async fn execute(
 
     ui.blank_line().map_err(ui_error)?;
     ui.heading(format!(
-        "Migrated {} of {} formulas to zerobrew",
+        "Migrated {} of {} formulas to zbrew",
         style(success_count).green().bold(),
         packages.formulas.len()
     ))

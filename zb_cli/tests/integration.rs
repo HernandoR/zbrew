@@ -3,10 +3,12 @@ use std::process::{Command, Output};
 
 struct TestEnv {
     root: tempfile::TempDir,
-    /// On macOS, Mach-O binary patching requires the prefix path to be no longer
-    /// than the original Homebrew prefix (`/opt/homebrew` = 13 chars). The default
-    /// OS temp directory on macOS (`/var/folders/…`) produces paths far too long,
-    /// so we create a separate short temp dir in `/tmp` for the prefix.
+    /// On macOS, Mach-O patching requires the prefix to be no longer than the
+    /// Homebrew prefix the bottles were built against — 13 characters on Apple
+    /// Silicon, 10 on Intel. The default temp directory on macOS
+    /// (`/var/folders/…`) is far longer than either, so the prefix gets its own
+    /// short temp dir in `/tmp`. `/tmp/zb` plus three random characters is
+    /// exactly 10, which fits both.
     prefix_dir: tempfile::TempDir,
 }
 
@@ -23,17 +25,26 @@ impl TestEnv {
     }
 
     fn prefix(&self) -> PathBuf {
-        self.prefix_dir.path().to_path_buf()
+        let path = self.prefix_dir.path().to_path_buf();
+        // Load-bearing: `zb init` refuses an over-budget prefix outright, so
+        // lengthening this — one more random character would do it — would fail
+        // every test here on an Intel Mac and nowhere else.
+        assert!(
+            path.to_string_lossy().len() <= "/usr/local".len(),
+            "test prefix {} is longer than the tightest budget any platform imposes",
+            path.display(),
+        );
+        path
     }
 
     fn zb(&self, args: &[&str]) -> Output {
         let zb = env!("CARGO_BIN_EXE_zb");
         Command::new(zb)
-            .env("ZEROBREW_ROOT", self.root.path())
-            // Use the short prefix so Mach-O patching stays within the 13-char limit,
-            // and prevent a host-level ZEROBREW_PREFIX from leaking into the test.
-            .env("ZEROBREW_PREFIX", self.prefix())
-            .env("ZEROBREW_AUTO_INIT", "true")
+            .env("ZBREW_ROOT", self.root.path())
+            // Use the short prefix so Mach-O patching stays within budget, and
+            // prevent a host-level ZBREW_PREFIX from leaking into the test.
+            .env("ZBREW_PREFIX", self.prefix())
+            .env("ZBREW_AUTO_INIT", "true")
             .args(args)
             .output()
             .unwrap_or_else(|_| panic!("failed to execute {zb} command"))
@@ -290,11 +301,11 @@ fn test_gc_removes_unused_store_entries() {
 fn reset_refuses_dangerous_root_and_prefix() {
     let zb = env!("CARGO_BIN_EXE_zb");
 
-    for dangerous in ["/", "/zzz-zerobrew-guard-test"] {
+    for dangerous in ["/", "/zzz-zbrew-guard-test"] {
         let output = Command::new(zb)
-            .env("ZEROBREW_ROOT", dangerous)
-            .env("ZEROBREW_PREFIX", dangerous)
-            .env("ZEROBREW_AUTO_INIT", "true")
+            .env("ZBREW_ROOT", dangerous)
+            .env("ZBREW_PREFIX", dangerous)
+            .env("ZBREW_AUTO_INIT", "true")
             .args(["reset", "--yes"])
             .output()
             .unwrap_or_else(|e| panic!("failed to execute {zb}: {e}"));
@@ -311,4 +322,43 @@ fn reset_refuses_dangerous_root_and_prefix() {
             "reset must explain why it refused {dangerous}.\nstdout: {stdout}\nstderr: {stderr}"
         );
     }
+}
+
+/// The CLI refuses a prefix too long to patch into this machine's bottles.
+///
+/// macOS only: Linux imposes no budget, because ELF rewriting resizes the
+/// strings it patches.
+///
+/// This covers the guard in `main`, which `run_init`'s own check cannot reach.
+/// `ensure_init` only calls `run_init` when `needs_init` is true, so a
+/// `ZBREW_PREFIX` pointing at a directory that already exists and is writable --
+/// the system temp directory here, `/var/folders/…`, far longer than the 10-13
+/// characters a Mach-O prefix rewrite has room for -- would otherwise sail past
+/// every check and install packages that break at run time.
+///
+/// Not marked `#[ignore]` like the tests above: it makes no network calls.
+#[test]
+#[cfg(target_os = "macos")]
+fn a_prefix_too_long_for_this_machine_is_refused() {
+    let long = tempfile::TempDir::new().expect("failed to create temp dir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zb"))
+        .env("ZBREW_ROOT", long.path())
+        .env("ZBREW_PREFIX", long.path())
+        .env("ZBREW_AUTO_INIT", "true")
+        .args(["list"])
+        .output()
+        .expect("failed to execute zb");
+
+    assert!(
+        !output.status.success(),
+        "zb accepted a {}-character prefix",
+        long.path().to_string_lossy().len(),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Mach-O string table") && stderr.contains("--prefix"),
+        "the refusal should say why and what to do instead, got: {stderr}",
+    );
 }

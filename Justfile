@@ -4,25 +4,25 @@ set unstable
 set lists
 set script-interpreter := ['bash', '-euo', 'pipefail']
 
-ZEROBREW_ROOT := if env('ZEROBREW_ROOT', '') != '' {
-    env('ZEROBREW_ROOT')
-} else if path_exists('/opt/zerobrew') == 'true' {
-    '/opt/zerobrew'
+# Mirrors get_root_path in zb_cli: an existing /opt/zbrew does not select the
+# root by itself, or a stray directory would override the XDG location on Linux.
+ZBREW_ROOT := if env('ZBREW_ROOT', '') != '' {
+    env('ZBREW_ROOT')
 } else if os() == 'macos' {
-    '/opt/zerobrew'
+    '/opt/zbrew'
 } else {
-    env('XDG_DATA_HOME', env('HOME', '~') / '.local' / 'share' ) / 'zerobrew'
+    env('XDG_DATA_HOME', env('HOME', '~') / '.local' / 'share' ) / 'zbrew'
 }
-ZEROBREW_DIR := env('ZEROBREW_DIR', env('HOME', '~') / '.zerobrew')
-ZEROBREW_BIN := env('ZEROBREW_BIN', env('HOME', '~') / '.local' / 'bin')
-ZEROBREW_PREFIX := if env('ZEROBREW_PREFIX', '') != '' {
-    env('ZEROBREW_PREFIX')
+ZBREW_DIR := env('ZBREW_DIR', env('HOME', '~') / '.zbrew')
+ZBREW_BIN := env('ZBREW_BIN', env('HOME', '~') / '.local' / 'bin')
+ZBREW_PREFIX := if env('ZBREW_PREFIX', '') != '' {
+    env('ZBREW_PREFIX')
 } else if os() == 'macos' {
-    ZEROBREW_ROOT
+    ZBREW_ROOT
 } else {
-    ZEROBREW_ROOT / 'prefix'
+    ZBREW_ROOT / 'prefix'
 }
-ZEROBREW_INSTALLED_BIN := ZEROBREW_BIN / 'zb'
+ZBREW_INSTALLED_BIN := ZBREW_BIN / 'zb'
 
 SUDO := if which('doas') != '' {
     'doas'
@@ -50,28 +50,28 @@ default:
 build: fmt-check lint
     cargo build --bin zb --bin zbx
 
-[doc('Install zb to $ZEROBREW_BIN')]
+[doc('Install zb to $ZBREW_BIN')]
 [group('install')]
 [script]
 install: build
-    if [[ -d "$ZEROBREW_PREFIX/lib/pkgconfig" ]]; then
-        export PKG_CONFIG_PATH="$ZEROBREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    if [[ -d "$ZBREW_PREFIX/lib/pkgconfig" ]]; then
+        export PKG_CONFIG_PATH="$ZBREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     fi
     if [[ -d '/opt/homebrew/lib/pkgconfig' ]] && [[ ! "$PKG_CONFIG_PATH" =~ '/opt/homebrew/lib/pkgconfig' ]]; then
         export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     fi
 
-    mkdir -p "$ZEROBREW_BIN"
-    install -Dm755 target/debug/zb "$ZEROBREW_BIN/zb"
-    install -Dm755 target/debug/zbx "$ZEROBREW_BIN/zbx"
-    echo "Installed zb to $ZEROBREW_BIN/zb"
-    echo "Installed zbx to $ZEROBREW_BIN/zbx"
+    mkdir -p "$ZBREW_BIN"
+    install -Dm755 target/debug/zb "$ZBREW_BIN/zb"
+    install -Dm755 target/debug/zbx "$ZBREW_BIN/zbx"
+    echo "Installed zb to $ZBREW_BIN/zb"
+    echo "Installed zbx to $ZBREW_BIN/zbx"
 
-    "$ZEROBREW_BIN/zb" init
+    "$ZBREW_BIN/zb" init
 
 [private]
 [script]
-_get_zerobrew_configs:
+_get_zbrew_configs:
     shell_configs=(
         "${ZDOTDIR:-$HOME}/.zshenv"
         "${ZDOTDIR:-$HOME}/.zshrc"
@@ -81,7 +81,7 @@ _get_zerobrew_configs:
     )
 
     for config in "${shell_configs[@]}"; do
-        if [[ -f "$config" ]] && grep -q '^# zerobrew$' "$config" 2>/dev/null; then
+        if [[ -f "$config" ]] && grep -q '^# zbrew$' "$config" 2>/dev/null; then
             echo "$config"
         fi
     done
@@ -90,7 +90,7 @@ _get_zerobrew_configs:
 [script]
 _clean_shell_config config:
     tmp_file=$(mktemp)
-    sed -e '/^# zerobrew$/,/^}$/d' \
+    sed -e '/^# zbrew$/,/^}$/d' \
         -e '/_zb_path_append/d' \
         "$config" > "$tmp_file" 2>/dev/null || true
     cat -s "$tmp_file" > "$config"
@@ -111,15 +111,15 @@ _confirm msg:
 [group('install')]
 [script]
 uninstall:
-    mapfile -t configs_to_clean < <(just _get_zerobrew_configs)
+    mapfile -t configs_to_clean < <(just _get_zbrew_configs)
 
     echo 'Running this will remove:'
     echo -en '{{BOLD}}{{RED}}'
-    echo -e  "\t$ZEROBREW_INSTALLED_BIN"
-    echo -e  "\t$ZEROBREW_DIR"
-    echo -e  "\t$ZEROBREW_ROOT"
+    echo -e  "\t$ZBREW_INSTALLED_BIN"
+    echo -e  "\t$ZBREW_DIR"
+    echo -e  "\t$ZBREW_ROOT"
     for config in "${configs_to_clean[@]}"; do
-        echo -e "\tzerobrew entries in $config"
+        echo -e "\tzbrew entries in $config"
     done
     echo -en '{{NORMAL}}'
 
@@ -130,30 +130,30 @@ uninstall:
         just _clean_shell_config "$config"
     done
 
-    [[ -f "$ZEROBREW_INSTALLED_BIN" ]] && rm -- "$ZEROBREW_INSTALLED_BIN"
-    [[ -d "$ZEROBREW_DIR" ]] && rm -rf -- "$ZEROBREW_DIR"
+    [[ -f "$ZBREW_INSTALLED_BIN" ]] && rm -- "$ZBREW_INSTALLED_BIN"
+    [[ -d "$ZBREW_DIR" ]] && rm -rf -- "$ZBREW_DIR"
 
-    if [[ -d "$ZEROBREW_ROOT" ]]; then
-        $SUDO rm -r -- "$ZEROBREW_ROOT"
+    if [[ -d "$ZBREW_ROOT" ]]; then
+        $SUDO rm -r -- "$ZBREW_ROOT"
     fi
 
     echo ''
-    echo -e '{{BOLD}}{{GREEN}}✓{{NORMAL}} zerobrew uninstalled successfully!'
+    echo -e '{{BOLD}}{{GREEN}}✓{{NORMAL}} zbrew uninstalled successfully!'
     echo ''
     echo 'Restart your terminal or run: exec $SHELL'
 
-[doc('Reset zerobrew completely (removes data and re-initializes)')]
+[doc('Reset zbrew completely (removes data and re-initializes)')]
 [group('install')]
 [script]
 reset:
-    mapfile -t configs_to_clean < <(just _get_zerobrew_configs)
+    mapfile -t configs_to_clean < <(just _get_zbrew_configs)
 
-    echo -e '{{BOLD}}{{YELLOW}}Warning:{{NORMAL}} This will reset zerobrew completely:'
+    echo -e '{{BOLD}}{{YELLOW}}Warning:{{NORMAL}} This will reset zbrew completely:'
     echo -en '{{BOLD}}{{RED}}'
-    echo -e  "\t$ZEROBREW_DIR"
-    echo -e  "\t$ZEROBREW_ROOT"
+    echo -e  "\t$ZBREW_DIR"
+    echo -e  "\t$ZBREW_ROOT"
     for config in "${configs_to_clean[@]}"; do
-        echo -e "\tzerobrew entries in $config"
+        echo -e "\tzbrew entries in $config"
     done
     echo -en '{{NORMAL}}'
 
@@ -164,22 +164,22 @@ reset:
         just _clean_shell_config "$config"
     done
 
-    [[ -d "$ZEROBREW_DIR" ]] && rm -rf -- "$ZEROBREW_DIR" && echo -e '{{BOLD}}{{GREEN}}✓{{NORMAL}} Removed '"$ZEROBREW_DIR"''
+    [[ -d "$ZBREW_DIR" ]] && rm -rf -- "$ZBREW_DIR" && echo -e '{{BOLD}}{{GREEN}}✓{{NORMAL}} Removed '"$ZBREW_DIR"''
 
-    if [[ -d "$ZEROBREW_ROOT" ]]; then
-        $SUDO rm -rf -- "$ZEROBREW_ROOT" && echo -e '{{BOLD}}{{GREEN}}✓{{NORMAL}} Removed '"$ZEROBREW_ROOT"''
+    if [[ -d "$ZBREW_ROOT" ]]; then
+        $SUDO rm -rf -- "$ZBREW_ROOT" && echo -e '{{BOLD}}{{GREEN}}✓{{NORMAL}} Removed '"$ZBREW_ROOT"''
     fi
 
     echo ''
-    echo -e '{{BOLD}}{{CYAN}}==>{{NORMAL}} Re-initializing zerobrew...'
+    echo -e '{{BOLD}}{{CYAN}}==>{{NORMAL}} Re-initializing zbrew...'
 
-    if [[ -f "$ZEROBREW_INSTALLED_BIN" ]]; then
-        "$ZEROBREW_INSTALLED_BIN" init
+    if [[ -f "$ZBREW_INSTALLED_BIN" ]]; then
+        "$ZBREW_INSTALLED_BIN" init
         echo ''
         echo -e '{{BOLD}}{{GREEN}}✓{{NORMAL}} Reset complete!'
     else
-        echo -e '{{BOLD}}{{YELLOW}}Note:{{NORMAL}} zb binary not found at $ZEROBREW_INSTALLED_BIN'
-        echo -e '{{BOLD}}{{YELLOW}}Note:{{NORMAL}} Run {{BOLD}}just install{{NORMAL}} first to install zerobrew'
+        echo -e '{{BOLD}}{{YELLOW}}Note:{{NORMAL}} zb binary not found at $ZBREW_INSTALLED_BIN'
+        echo -e '{{BOLD}}{{YELLOW}}Note:{{NORMAL}} Run {{BOLD}}just install{{NORMAL}} first to install zbrew'
     fi
 
 [doc('Format code with rustfmt')]
@@ -214,7 +214,7 @@ lint:
 test:
     cargo test --workspace -- --include-ignored
 
-[doc('Run benchmark comparing zerobrew vs homebrew')]
+[doc('Run benchmark comparing zbrew vs homebrew')]
 [group('benchmark')]
 [positional-arguments]
 [script]
@@ -312,12 +312,12 @@ bench *args:
         exit 1
     fi
 
-    # Check if zerobrew directories have files not owned by current user
+    # Check if zbrew directories have files not owned by current user
     # This would cause zb reset to prompt for sudo during benchmarks
     current_user=$(whoami)
     needs_chown=false
 
-    for dir in "$ZEROBREW_ROOT" "$ZEROBREW_PREFIX"; do
+    for dir in "$ZBREW_ROOT" "$ZBREW_PREFIX"; do
         if [[ -d "$dir" ]]; then
             # Find any files/dirs not owned by current user (limit to 1 for speed)
             not_owned=$(find "$dir" ! -user "$current_user" -print -quit 2>/dev/null)
@@ -329,14 +329,14 @@ bench *args:
     done
 
     if [[ "$needs_chown" == "true" ]]; then
-        echo -e "${YELLOW}==> Some files in zerobrew directories are not owned by you.${NORMAL}" >&2
+        echo -e "${YELLOW}==> Some files in zbrew directories are not owned by you.${NORMAL}" >&2
         echo -e "${YELLOW}    This will cause password prompts during benchmarks.${NORMAL}" >&2
         echo -e "${YELLOW}    Fixing ownership now (requires sudo once)...${NORMAL}" >&2
-        if [[ -d "$ZEROBREW_ROOT" ]]; then
-            {{SUDO}} chown -R "$current_user" "$ZEROBREW_ROOT" || { echo "Error: Failed to fix ownership of $ZEROBREW_ROOT" >&2; exit 1; }
+        if [[ -d "$ZBREW_ROOT" ]]; then
+            {{SUDO}} chown -R "$current_user" "$ZBREW_ROOT" || { echo "Error: Failed to fix ownership of $ZBREW_ROOT" >&2; exit 1; }
         fi
-        if [[ -d "$ZEROBREW_PREFIX" && "$ZEROBREW_PREFIX" != "$ZEROBREW_ROOT"* ]]; then
-            {{SUDO}} chown -R "$current_user" "$ZEROBREW_PREFIX" || { echo "Error: Failed to fix ownership of $ZEROBREW_PREFIX" >&2; exit 1; }
+        if [[ -d "$ZBREW_PREFIX" && "$ZBREW_PREFIX" != "$ZBREW_ROOT"* ]]; then
+            {{SUDO}} chown -R "$current_user" "$ZBREW_PREFIX" || { echo "Error: Failed to fix ownership of $ZBREW_PREFIX" >&2; exit 1; }
         fi
         echo -e "${GREEN}    Ownership fixed!${NORMAL}" >&2
     fi
@@ -471,7 +471,7 @@ bench *args:
         brew uninstall --ignore-dependencies "$pkg" &>/dev/null || true
 
         zb reset -y &>/dev/null || true
-        if ZB_COLD_MS=$(run_timed_install "Zerobrew (cold)" zb install "$pkg"); then
+        if ZB_COLD_MS=$(run_timed_install "Zbrew (cold)" zb install "$pkg"); then
             echo -e "    ${GREEN}OK: $(format_duration "$ZB_COLD_MS")${NORMAL}" >&2
         else
             echo -e "    ${RED}FAILED${NORMAL}" >&2
@@ -483,7 +483,7 @@ bench *args:
         fi
 
         zb uninstall "$pkg" &>/dev/null || true
-        if ZB_WARM_MS=$(run_timed_install "Zerobrew (warm)" zb install "$pkg"); then
+        if ZB_WARM_MS=$(run_timed_install "Zbrew (warm)" zb install "$pkg"); then
             echo -e "    ${GREEN}OK: $(format_duration "$ZB_WARM_MS")${NORMAL}" >&2
         else
             echo -e "    ${RED}FAILED${NORMAL}" >&2
@@ -569,7 +569,7 @@ bench *args:
         for i in "${!NAMES[@]}"; do
             [[ $first -eq 0 ]] && printf ","
             first=0
-            printf '{"name":"%s","homebrew_ms":%s,"zerobrew_cold_ms":%s,"zerobrew_warm_ms":%s,"speedup_cold":%s,"speedup_warm":%s}' "${NAMES[i]}" "${BREW_TIMES[i]}" "${ZB_COLD_TIMES[i]}" "${ZB_WARM_TIMES[i]}" "${SPEEDUPS_COLD[i]}" "${SPEEDUPS_WARM[i]}"
+            printf '{"name":"%s","homebrew_ms":%s,"zbrew_cold_ms":%s,"zbrew_warm_ms":%s,"speedup_cold":%s,"speedup_warm":%s}' "${NAMES[i]}" "${BREW_TIMES[i]}" "${ZB_COLD_TIMES[i]}" "${ZB_WARM_TIMES[i]}" "${SPEEDUPS_COLD[i]}" "${SPEEDUPS_WARM[i]}"
         done
         printf '],"failures":['
         first=1
@@ -582,7 +582,7 @@ bench *args:
     }
 
     output_csv() {
-        echo "package,homebrew_ms,zerobrew_cold_ms,zerobrew_warm_ms,speedup_cold,speedup_warm"
+        echo "package,homebrew_ms,zbrew_cold_ms,zbrew_warm_ms,speedup_cold,speedup_warm"
         for i in "${!NAMES[@]}"; do
             echo "${NAMES[i]},${BREW_TIMES[i]},${ZB_COLD_TIMES[i]},${ZB_WARM_TIMES[i]},${SPEEDUPS_COLD[i]},${SPEEDUPS_WARM[i]}"
         done
@@ -592,7 +592,7 @@ bench *args:
         echo '<!DOCTYPE html>'
         echo '<html>'
         echo '<head>'
-        echo '    <title>Zerobrew Benchmark Results</title>'
+        echo '    <title>Zbrew Benchmark Results</title>'
         echo '    <style>'
         echo '        body { font-family: -apple-system, BlinkMacSystemFont, '"'"'Segoe UI'"'"', Roboto, sans-serif; margin: 40px; background: #f5f5f5; }'
         echo '        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }'
@@ -612,7 +612,7 @@ bench *args:
         echo '</head>'
         echo '<body>'
         echo '    <div class="container">'
-        echo '        <h1>Zerobrew Benchmark Results</h1>'
+        echo '        <h1>Zbrew Benchmark Results</h1>'
         echo '        <div class="summary">'
         echo '            <div class="stat">'
         echo "                <div class=\"stat-value\">${#PACKAGES[@]}</div>"
