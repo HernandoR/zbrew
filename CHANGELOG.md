@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The rename to `zbrew` had rewritten `zerobrew.rs` — upstream's domain, which this fork does not control — into `zbrew.rs`, which does not exist. It appeared in the banner `install.sh` prints after a successful install, and in the very warning whose job is to steer people away from upstream's installer; naming a domain that resolves to nothing made that warning protect no one. The READMEs name upstream's domain again, and the installer points at this repository instead of a docs site the fork does not own
+
 ## [0.4.0] - 2026-09-14
 
 The first release under the name `zbrew`. It carries everything that was

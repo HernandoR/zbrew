@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/HernandoR/zbrew/main/install.sh | b
 
 安装程序会更新你的 shell 配置。完成后，重启终端，或运行它打印的 `source` 命令。
 
-> `https://zbrew.rs/install` 提供的仍是**上游**的安装脚本，该域名不在本分支控制之下。
+> `https://zerobrew.rs/install` 提供的仍是**上游**的安装脚本，该域名不在本分支控制之下。
 > 安装本分支请使用上面的地址。
 
 > [!WARNING]
