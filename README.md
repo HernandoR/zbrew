@@ -39,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/HernandoR/zbrew/main/install.sh | b
 The installer updates your shell config. After it finishes, restart your terminal
 or run the `source` command it prints.
 
-> `https://zbrew.rs/install` still serves the **upstream** installer, and this fork
+> `https://zerobrew.rs/install` still serves the **upstream** installer, and this fork
 > does not control that domain. Use the URL above to install this fork.
 
 > [!WARNING]

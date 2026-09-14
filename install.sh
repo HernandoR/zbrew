@@ -437,7 +437,7 @@ print_logo() {
     printf "%bStart installing %bPackages%b with %bzbrew%b:\n\n" "$MUTED" "$NC" "$MUTED" "$ORANGE" "$NC"
     printf "  zb install %bffmpeg%b    # Install a Package%b\n" "$ORANGE" "$MUTED" "$NC"
     printf "  zbx %byetris%b           # Single-time Run%b\n\n" "$ORANGE" "$MUTED" "$NC"
-    printf "%bFor more information visit %bhttps://zbrew.rs/docs\n\n" "$MUTED" "$NC"
+    printf "%bFor more information visit %bhttps://github.com/HernandoR/zbrew\n\n" "$MUTED" "$NC"
 }
 
 while [[ $# -gt 0 ]]; do
