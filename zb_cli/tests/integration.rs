@@ -323,3 +323,42 @@ fn reset_refuses_dangerous_root_and_prefix() {
         );
     }
 }
+
+/// The CLI refuses a prefix too long to patch into this machine's bottles.
+///
+/// macOS only: Linux imposes no budget, because ELF rewriting resizes the
+/// strings it patches.
+///
+/// This covers the guard in `main`, which `run_init`'s own check cannot reach.
+/// `ensure_init` only calls `run_init` when `needs_init` is true, so a
+/// `ZBREW_PREFIX` pointing at a directory that already exists and is writable --
+/// the system temp directory here, `/var/folders/…`, far longer than the 10-13
+/// characters a Mach-O prefix rewrite has room for -- would otherwise sail past
+/// every check and install packages that break at run time.
+///
+/// Not marked `#[ignore]` like the tests above: it makes no network calls.
+#[test]
+#[cfg(target_os = "macos")]
+fn a_prefix_too_long_for_this_machine_is_refused() {
+    let long = tempfile::TempDir::new().expect("failed to create temp dir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zb"))
+        .env("ZBREW_ROOT", long.path())
+        .env("ZBREW_PREFIX", long.path())
+        .env("ZBREW_AUTO_INIT", "true")
+        .args(["list"])
+        .output()
+        .expect("failed to execute zb");
+
+    assert!(
+        !output.status.success(),
+        "zb accepted a {}-character prefix",
+        long.path().to_string_lossy().len(),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Mach-O string table") && stderr.contains("--prefix"),
+        "the refusal should say why and what to do instead, got: {stderr}",
+    );
+}

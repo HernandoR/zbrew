@@ -13,8 +13,7 @@ pub use build::{BuildExecutor, DepInfo};
 pub use cellar::{Cellar, LinkedFile, Linker, MaterializedKeg};
 pub use extraction::extract_tarball;
 pub use extraction::patch::relocation::{
-    DEFAULT_MACOS_PREFIX, PrefixTooLong, check_prefix_fits, homebrew_prefix_for_bottle_tag,
-    homebrew_prefix_for_host,
+    DEFAULT_MACOS_PREFIX, PrefixTooLong, check_prefix_fits, homebrew_prefix_for_host,
 };
 pub use installer::{
     DiagnosticReport, ExecuteResult, HomebrewMigrationPackages, HomebrewPackage, InstallPlan,

@@ -35,6 +35,22 @@ async fn run(cli: Cli) -> Result<(), zb_core::Error> {
         return commands::init::execute(&root, &prefix, no_modify_path, &mut ui);
     }
 
+    // Refuse a prefix this machine's bottles cannot be patched to use, before
+    // anything acts on it. `run_init` checks the same thing, but only reaches it
+    // when `needs_init` is true: a ZBREW_PREFIX pointed at a directory that
+    // already exists and is writable skips init entirely and would install
+    // packages that break at run time. `reset` is exempt, because deleting an
+    // unusable prefix is the way out of one.
+    if !matches!(cli.command, Commands::Reset { .. }) {
+        zb_io::check_prefix_fits(
+            &prefix.to_string_lossy(),
+            zb_io::homebrew_prefix_for_host(std::env::consts::OS, std::env::consts::ARCH),
+        )
+        .map_err(|too_long| zb_core::Error::InvalidArgument {
+            message: too_long.message(),
+        })?;
+    }
+
     // `reset` recursively deletes both directories, so refuse a dangerous root or
     // prefix up front -- before create_installer(), which would otherwise create
     // its directory tree underneath an unvalidated path. reset::execute checks

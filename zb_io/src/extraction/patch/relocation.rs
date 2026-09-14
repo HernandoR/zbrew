@@ -63,25 +63,6 @@ pub fn homebrew_prefix_for_host(os: &str, arch: &str) -> Option<&'static str> {
     }
 }
 
-/// The Homebrew prefix that a bottle carrying `tag` was built against, or `None`
-/// when the tag imposes no length constraint.
-///
-/// More precise than [`homebrew_prefix_for_host`], because it describes the
-/// bottle actually selected rather than the host it is destined for. Homebrew
-/// tags are `arm64_<codename>` for Apple Silicon, a bare `<codename>` for Intel,
-/// `<arch>_linux` for Linux, and `all` for a bottle with no architecture at all.
-pub fn homebrew_prefix_for_bottle_tag(tag: &str) -> Option<&'static str> {
-    if tag == "all" || tag.ends_with("_linux") {
-        return None;
-    }
-
-    if tag.starts_with("arm64_") {
-        Some("/opt/homebrew")
-    } else {
-        Some("/usr/local")
-    }
-}
-
 /// The Homebrew prefix that starts at `position`, if any.
 ///
 /// A match has to sit on a path boundary: it must end at a `/` or at the end of
@@ -422,25 +403,6 @@ mod tests {
         // ELF rewriting resizes the strings it patches, so length is free.
         assert_eq!(homebrew_prefix_for_host("linux", "x86_64"), None);
         assert_eq!(homebrew_prefix_for_host("linux", "aarch64"), None);
-    }
-
-    #[test]
-    fn bottle_tags_name_the_prefix_they_were_built_against() {
-        assert_eq!(
-            homebrew_prefix_for_bottle_tag("arm64_sonoma"),
-            Some("/opt/homebrew")
-        );
-        assert_eq!(homebrew_prefix_for_bottle_tag("sonoma"), Some("/usr/local"));
-        assert_eq!(homebrew_prefix_for_bottle_tag("all"), None);
-    }
-
-    #[test]
-    fn an_arm64_linux_tag_is_linux_rather_than_apple_silicon() {
-        // `arm64_linux` starts with `arm64_` but is not a macOS bottle, so the
-        // Linux test has to win.
-        assert_eq!(homebrew_prefix_for_bottle_tag("arm64_linux"), None);
-        assert_eq!(homebrew_prefix_for_bottle_tag("aarch64_linux"), None);
-        assert_eq!(homebrew_prefix_for_bottle_tag("x86_64_linux"), None);
     }
 
     #[test]
