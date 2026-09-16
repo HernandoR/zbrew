@@ -399,6 +399,13 @@ fn patch_text_placeholders(keg_path: &Path, prefix_dir: &Path) -> Result<(), Err
 
     files.par_iter().for_each(|path| {
         let result = (|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            // An archive that carries a hash of its own bytes is never rewritten:
+            // restoring the bytes it was signed with is the only edit that leaves
+            // it runnable, and that is handled there.
+            if super::phar::restore_self_signed(path) {
+                return Ok(());
+            }
+
             // Check if file is likely text
             let mut file = fs::File::open(path)?;
             let mut buf = [0u8; 8192];
@@ -466,6 +473,77 @@ mod tests {
 
     use std::process::Command;
     use tempfile::TempDir;
+
+    use super::super::phar::tests::{bottled, phar_signature_verifies, signed_phar};
+
+    /// A keg holding one file, laid out the way a bottle extracts.
+    fn keg_with(tmp: &TempDir, name: &str, contents: &[u8]) -> (PathBuf, PathBuf, PathBuf) {
+        let prefix = tmp.path().join("prefix");
+        let pkg_dir = prefix.join("Cellar/testpkg/1.0.0");
+        let bin_dir = pkg_dir.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let path = bin_dir.join(name);
+        fs::write(&path, contents).unwrap();
+        // Bottles ship executables read-only, which is the path the patcher has
+        // to unlock before it can write.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o555)).unwrap();
+
+        (prefix, pkg_dir, path)
+    }
+
+    /// Regression test for issue #39 / upstream #389: the composer bottle ships
+    /// its whole program as a signed PHP archive, and Homebrew bottled
+    /// `@@HOMEBREW_PREFIX@@` into it. Left literal, the archive no longer
+    /// hashes to its own signature and PHP refuses to run it.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_placeholdered_phar_is_restored_to_the_bytes_its_signature_covers() {
+        let tmp = TempDir::new().unwrap();
+
+        let original = signed_phar(
+            "#!/usr/bin/env php\n<?php Phar::mapPhar();\n",
+            b"\0\x01cacert: /home/linuxbrew/.linuxbrew/etc/openssl@3/cert.pem\0",
+        );
+        let (prefix, pkg_dir, path) =
+            keg_with(&tmp, "composer", &bottled(&original, LINUX_HOMEBREW_PREFIX));
+        patch_placeholders(&pkg_dir, &prefix, "testpkg", "1.0.0").unwrap();
+
+        let patched = fs::read(&path).unwrap();
+        assert!(
+            phar_signature_verifies(&patched),
+            "the installed archive has to hash to the signature it carries"
+        );
+        assert_eq!(patched, original);
+    }
+
+    /// The other half of the rule, as a guard rather than a regression: an
+    /// intact phar comes out byte-identical even when the text pass can read it
+    /// and can see a Homebrew path inside it. Today the digest bytes are what
+    /// keeps a real phar out of the rewriter -- they are rarely valid UTF-8 --
+    /// which is a coincidence, not a decision.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn an_intact_phar_is_never_rewritten() {
+        let tmp = TempDir::new().unwrap();
+
+        // The stub is long enough that the body sits past the 8 KiB the text
+        // pass sniffs, so the file is not dismissed as binary on sight.
+        let stub = format!(
+            "#!/usr/bin/env php\n<?php /* {} */ Phar::mapPhar();\n// {LINUX_HOMEBREW_PREFIX}/etc\n",
+            "pad ".repeat(2500)
+        );
+        let original = signed_phar(&stub, b"payload\n");
+
+        let (prefix, pkg_dir, path) = keg_with(&tmp, "tool.phar", &original);
+        patch_placeholders(&pkg_dir, &prefix, "testpkg", "1.0.0").unwrap();
+
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            original,
+            "rewriting a path inside a signed archive invalidates its signature"
+        );
+    }
 
     fn compile_dummy_elf(dir: &Path, name: &str) -> Option<PathBuf> {
         let src_path = dir.join(format!("{}.c", name));

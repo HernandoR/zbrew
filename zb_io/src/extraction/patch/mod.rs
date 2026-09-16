@@ -5,6 +5,10 @@
 #[allow(dead_code)]
 pub mod relocation;
 
+// Signed archives are Homebrew's problem on every platform, not one patcher's,
+// and the decision they need is pure: compiled and tested everywhere.
+mod phar;
+
 #[cfg(target_os = "linux")]
 pub mod linux;
 

@@ -16,6 +16,13 @@ use super::relocation::{
 
 /// Patch hardcoded Homebrew paths in text files.
 fn patch_text_file_strings(path: &Path, new_prefix: &str, new_cellar: &str) -> Result<(), Error> {
+    // An archive that carries a hash of its own bytes is never rewritten:
+    // restoring the bytes it was signed with is the only edit that leaves it
+    // runnable, and that is handled there.
+    if super::phar::restore_self_signed(path) {
+        return Ok(());
+    }
+
     let mut file = match fs::File::open(path) {
         Ok(f) => f,
         Err(_) => return Ok(()),
@@ -843,6 +850,35 @@ mod tests {
         // The bug this guards against is zero-filling the *replaced* prefix's
         // leftover bytes in place, which cuts the string short at the first NUL.
         assert!(find(&patched, b"/opt/zb\0").is_none());
+    }
+
+    /// Regression test for issue #39 / upstream #389. The macOS composer bottle
+    /// is one signed PHP archive with `@@HOMEBREW_PREFIX@@` bottled into it, 12
+    /// bytes longer than the bytes its SHA-512 covers. Left literal -- which is
+    /// what the text pass did, since the archive reads as binary -- PHP rejects
+    /// it. Expanding it to zbrew's prefix would not help either: only the
+    /// original bytes hash to the signature the archive carries.
+    #[test]
+    fn a_placeholdered_phar_is_restored_rather_than_rewritten() {
+        use super::super::phar::tests::{bottled, phar_signature_verifies, signed_phar};
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("composer");
+
+        let original = signed_phar(
+            "#!/usr/bin/env php\n<?php Phar::mapPhar('composer.phar');\n",
+            b"\0\x01'/opt/homebrew/etc/openssl@3/cert.pem',\0",
+        );
+        fs::write(&path, bottled(&original, "/opt/homebrew")).unwrap();
+
+        patch_text_file_strings(&path, NEW_PREFIX, "/opt/zb/Cellar").unwrap();
+
+        let patched = fs::read(&path).unwrap();
+        assert!(
+            phar_signature_verifies(&patched),
+            "the installed archive has to hash to the signature it carries"
+        );
+        assert_eq!(patched, original);
     }
 
     #[test]
