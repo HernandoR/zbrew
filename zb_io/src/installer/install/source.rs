@@ -5,6 +5,7 @@ use tracing::warn;
 use zb_core::{BuildPlan, Error};
 
 use crate::progress::InstallProgress;
+use crate::storage::db::InstallReason;
 
 use super::{Installer, PlannedInstall, dependency_cellar_path};
 
@@ -14,6 +15,7 @@ impl Installer {
         item: &PlannedInstall,
         build_plan: &BuildPlan,
         link: bool,
+        reason: InstallReason,
         report: &impl Fn(InstallProgress),
     ) -> Result<(), Error> {
         let install_name = &item.install_name;
@@ -86,7 +88,7 @@ impl Installer {
             Self::cleanup_materialized(&self.cellar, formula_name, &version);
         })?;
 
-        if let Err(e) = tx.record_install(install_name, &version, &store_key) {
+        if let Err(e) = tx.record_install(install_name, &version, &store_key, reason) {
             drop(tx);
             Self::cleanup_materialized(&self.cellar, formula_name, &version);
             return Err(e);

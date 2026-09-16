@@ -24,8 +24,12 @@ pub async fn prepare_execution(
             style(&normalized).green()
         );
 
+        // Registered as transient, not installed outright: `cmd.exec()` at
+        // the end of `run` replaces this process, so there is no point after
+        // the command where we could uninstall. Marking the keg instead keeps
+        // it out of `zb list` and lets `zb gc` reclaim it. See issue #36.
         let plan = installer.plan(std::slice::from_ref(&normalized)).await?;
-        installer.execute(plan, false).await?;
+        installer.execute(plan.transient(), false).await?;
     }
 
     let installed =
@@ -261,6 +265,11 @@ mod tests {
         assert!(installer.is_installed("testrun"));
         assert!(!prefix.join("bin/testrun").exists());
 
+        // The keg exists so the command can run, but it is registered as
+        // disposable so `zb list` hides it and `zb gc` reclaims it (#36).
+        let keg = installer.get_installed("testrun").unwrap();
+        assert!(keg.reason.is_transient());
+
         assert!(bin_path.exists());
         assert!(bin_path.ends_with("bin/testrun"));
 
@@ -342,6 +351,16 @@ mod tests {
         let bin_path = prepare_execution(&mut installer, "alreadyinstalled")
             .await
             .unwrap();
+
+        // Running a formula the user installed on purpose must not turn it
+        // into something `zb gc` will delete (#36).
+        assert!(
+            !installer
+                .get_installed("alreadyinstalled")
+                .unwrap()
+                .reason
+                .is_transient()
+        );
 
         assert!(bin_path.exists());
         assert!(bin_path.ends_with("bin/alreadyinstalled"));

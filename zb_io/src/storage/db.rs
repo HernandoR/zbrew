@@ -8,12 +8,55 @@ pub struct Database {
     conn: Connection,
 }
 
+/// Why a keg is registered in `installed_kegs`.
+///
+/// `Retained` covers everything a user asked to keep: explicit `zb install`
+/// targets and the dependencies pulled in to satisfy them. `Transient` is a
+/// keg materialized only so `zb run`/`zbx` could execute a command once.
+///
+/// The two are ordered by strength, and `record_install` only ever moves a
+/// keg up: a `zbx` invocation can never demote something `zb install` put
+/// there, so an explicitly installed formula is never hidden or reclaimed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InstallReason {
+    #[default]
+    Retained,
+    Transient,
+}
+
+impl InstallReason {
+    const RETAINED: &'static str = "retained";
+    const TRANSIENT: &'static str = "transient";
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Retained => Self::RETAINED,
+            Self::Transient => Self::TRANSIENT,
+        }
+    }
+
+    /// Unknown values decay to `Retained`: a row written by a future zbrew
+    /// with a reason this build does not know about must never be treated as
+    /// disposable.
+    fn from_str(value: &str) -> Self {
+        match value {
+            Self::TRANSIENT => Self::Transient,
+            _ => Self::Retained,
+        }
+    }
+
+    pub fn is_transient(self) -> bool {
+        self == Self::Transient
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct InstalledKeg {
     pub name: String,
     pub version: String,
     pub store_key: String,
     pub installed_at: i64,
+    pub reason: InstallReason,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,8 +73,19 @@ pub struct KegFileRecord {
     pub target_path: String,
 }
 
+fn keg_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledKeg> {
+    let reason: String = row.get(4)?;
+    Ok(InstalledKeg {
+        name: row.get(0)?,
+        version: row.get(1)?,
+        store_key: row.get(2)?,
+        installed_at: row.get(3)?,
+        reason: InstallReason::from_str(&reason),
+    })
+}
+
 impl Database {
-    const SCHEMA_VERSION: u32 = 1;
+    const SCHEMA_VERSION: u32 = 2;
 
     pub fn open(path: &Path) -> Result<Self, Error> {
         let conn = Connection::open(path).map_err(Error::store("failed to open database"))?;
@@ -89,6 +143,7 @@ impl Database {
     fn migrate_to_version(conn: &Connection, version: u32) -> Result<(), Error> {
         match version {
             1 => Self::migrate_to_v1(conn),
+            2 => Self::migrate_to_v2(conn),
             _ => Err(Error::StoreCorruption {
                 message: format!("unknown migration version {}", version),
             }),
@@ -124,6 +179,56 @@ impl Database {
         Ok(())
     }
 
+    /// Add `installed_kegs.install_reason`.
+    ///
+    /// Every row that predates this column was written by `zb install` or by
+    /// a dependency of one -- `zb run` was the only producer of disposable
+    /// kegs and it could not mark them -- so defaulting to `retained` keeps
+    /// existing installations visible and safe from `zb gc`. Kegs a previous
+    /// `zbx` leaked stay listed, which is the conservative direction: the
+    /// alternative would have `zb gc` delete packages the user believes they
+    /// installed.
+    fn migrate_to_v2(conn: &Connection) -> Result<(), Error> {
+        if Self::has_column(conn, "installed_kegs", "install_reason")? {
+            return Ok(());
+        }
+
+        conn.execute(
+            &format!(
+                "ALTER TABLE installed_kegs
+                 ADD COLUMN install_reason TEXT NOT NULL DEFAULT '{}'",
+                InstallReason::RETAINED
+            ),
+            [],
+        )
+        .map_err(Error::store("failed to add install_reason column"))?;
+
+        Ok(())
+    }
+
+    fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, Error> {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({})", table))
+            .map_err(Error::store("failed to inspect table"))?;
+
+        let mut found = false;
+        let mut rows = stmt
+            .query([])
+            .map_err(Error::store("failed to inspect table"))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(Error::store("failed to inspect table"))?
+        {
+            let name: String = row.get(1).map_err(Error::store("failed to read column"))?;
+            if name == column {
+                found = true;
+                break;
+            }
+        }
+
+        Ok(found)
+    }
+
     pub fn transaction(&mut self) -> Result<InstallTransaction<'_>, Error> {
         let tx = self
             .conn
@@ -136,37 +241,28 @@ impl Database {
     pub fn get_installed(&self, name: &str) -> Option<InstalledKeg> {
         self.conn
             .query_row(
-                "SELECT name, version, store_key, installed_at FROM installed_kegs WHERE name = ?1",
+                "SELECT name, version, store_key, installed_at, install_reason
+                 FROM installed_kegs WHERE name = ?1",
                 params![name],
-                |row| {
-                    Ok(InstalledKeg {
-                        name: row.get(0)?,
-                        version: row.get(1)?,
-                        store_key: row.get(2)?,
-                        installed_at: row.get(3)?,
-                    })
-                },
+                keg_from_row,
             )
             .ok()
     }
 
+    /// Every registered keg, transient ones included. Callers that report to
+    /// the user filter on [`InstalledKeg::reason`]; callers that reason about
+    /// what is on disk (doctor, `uninstall --all`, gc) must not.
     pub fn list_installed(&self) -> Result<Vec<InstalledKeg>, Error> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT name, version, store_key, installed_at FROM installed_kegs ORDER BY name",
+                "SELECT name, version, store_key, installed_at, install_reason
+                 FROM installed_kegs ORDER BY name",
             )
             .map_err(Error::store("failed to prepare statement"))?;
 
         let kegs = stmt
-            .query_map([], |row| {
-                Ok(InstalledKeg {
-                    name: row.get(0)?,
-                    version: row.get(1)?,
-                    store_key: row.get(2)?,
-                    installed_at: row.get(3)?,
-                })
-            })
+            .query_map([], keg_from_row)
             .map_err(Error::store("failed to query installed kegs"))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(Error::store("failed to collect results"))?;
@@ -318,7 +414,22 @@ pub struct InstallTransaction<'a> {
 }
 
 impl<'a> InstallTransaction<'a> {
-    pub fn record_install(&self, name: &str, version: &str, store_key: &str) -> Result<(), Error> {
+    /// Register `name` as installed.
+    ///
+    /// `reason` is a floor, never a ceiling: recording a keg as
+    /// [`InstallReason::Transient`] leaves an existing `Retained` row
+    /// retained, while recording it as `Retained` promotes a transient row.
+    /// `zb install` re-records its whole dependency closure, so a dependency
+    /// a previous `zbx` left behind is promoted the moment something the user
+    /// wants to keep needs it -- which is what makes it safe for `zb gc` to
+    /// delete transient kegs outright.
+    pub fn record_install(
+        &self,
+        name: &str,
+        version: &str,
+        store_key: &str,
+        reason: InstallReason,
+    ) -> Result<(), Error> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -336,13 +447,24 @@ impl<'a> InstallTransaction<'a> {
 
         self.tx
             .execute(
-                "INSERT INTO installed_kegs (name, version, store_key, installed_at)
-                 VALUES (?1, ?2, ?3, ?4)
+                "INSERT INTO installed_kegs (name, version, store_key, installed_at, install_reason)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(name) DO UPDATE SET
                      version = excluded.version,
                      store_key = excluded.store_key,
-                     installed_at = excluded.installed_at",
-                params![name, version, store_key, now],
+                     installed_at = excluded.installed_at,
+                     install_reason = CASE
+                         WHEN excluded.install_reason = ?6 THEN installed_kegs.install_reason
+                         ELSE excluded.install_reason
+                     END",
+                params![
+                    name,
+                    version,
+                    store_key,
+                    now,
+                    reason.as_str(),
+                    InstallReason::TRANSIENT
+                ],
             )
             .map_err(Error::store("failed to record install"))?;
 
@@ -457,7 +579,8 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.0.0", "abc123").unwrap();
+            tx.record_install("foo", "1.0.0", "abc123", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -474,7 +597,8 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.0.0", "abc123").unwrap();
+            tx.record_install("foo", "1.0.0", "abc123", InstallReason::Retained)
+                .unwrap();
             // Don't commit - transaction will be rolled back when dropped
         }
 
@@ -491,8 +615,10 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.0.0", "shared123").unwrap();
-            tx.record_install("bar", "2.0.0", "shared123").unwrap();
+            tx.record_install("foo", "1.0.0", "shared123", InstallReason::Retained)
+                .unwrap();
+            tx.record_install("bar", "2.0.0", "shared123", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -515,8 +641,10 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.0.0", "key1").unwrap();
-            tx.record_install("bar", "2.0.0", "key2").unwrap();
+            tx.record_install("foo", "1.0.0", "key1", InstallReason::Retained)
+                .unwrap();
+            tx.record_install("bar", "2.0.0", "key2", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -540,7 +668,8 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.0.0", "abc123").unwrap();
+            tx.record_install("foo", "1.0.0", "abc123", InstallReason::Retained)
+                .unwrap();
             tx.record_linked_file(
                 "foo",
                 "1.0.0",
@@ -567,7 +696,8 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.0.0", "samekey").unwrap();
+            tx.record_install("foo", "1.0.0", "samekey", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -575,7 +705,8 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.0.0", "samekey").unwrap();
+            tx.record_install("foo", "1.0.0", "samekey", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -588,7 +719,8 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.0.0", "oldkey").unwrap();
+            tx.record_install("foo", "1.0.0", "oldkey", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -596,7 +728,8 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.1.0", "newkey").unwrap();
+            tx.record_install("foo", "1.1.0", "newkey", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -614,7 +747,8 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.0.0", "gc_key").unwrap();
+            tx.record_install("foo", "1.0.0", "gc_key", InstallReason::Retained)
+                .unwrap();
             tx.record_uninstall("foo").unwrap();
             tx.commit().unwrap();
         }
@@ -630,7 +764,8 @@ mod tests {
 
         {
             let tx = db.transaction().unwrap();
-            tx.record_install("foo", "1.0.0", "oldkey").unwrap();
+            tx.record_install("foo", "1.0.0", "oldkey", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -644,7 +779,9 @@ mod tests {
             .unwrap();
 
         let tx = db.transaction().unwrap();
-        let err = tx.record_install("foo", "1.1.0", "newkey").unwrap_err();
+        let err = tx
+            .record_install("foo", "1.1.0", "newkey", InstallReason::Retained)
+            .unwrap_err();
         assert!(matches!(err, Error::StoreCorruption { .. }));
         assert!(
             err.to_string()
@@ -653,10 +790,10 @@ mod tests {
     }
 
     #[test]
-    fn new_database_starts_at_version_1() {
+    fn new_database_starts_at_current_version() {
         let db = Database::in_memory().expect("failed to create database");
         let version = Database::get_schema_version(&db.conn).expect("failed to get version");
-        assert_eq!(version, 1);
+        assert_eq!(version, Database::SCHEMA_VERSION);
     }
 
     #[test]
@@ -665,7 +802,7 @@ mod tests {
         Database::migrate(&db.conn).expect("first migration failed");
         Database::migrate(&db.conn).expect("second migration failed");
         let version = Database::get_schema_version(&db.conn).expect("failed to get version");
-        assert_eq!(version, 1);
+        assert_eq!(version, Database::SCHEMA_VERSION);
     }
 
     #[test]
@@ -703,5 +840,131 @@ mod tests {
             .query_row("SELECT name FROM installed_kegs", [], |row| row.get(0))
             .expect("failed to query data");
         assert_eq!(name, "test");
+    }
+
+    /// A v1 database -- one written by zbrew 0.4.0 or earlier -- must open
+    /// without losing rows, and every row it carries must come back retained.
+    #[test]
+    fn v1_database_migrates_to_v2_with_retained_rows() {
+        let conn = Connection::open_in_memory().expect("failed to open connection");
+
+        Database::migrate_to_v1(&conn).expect("failed to create v1 schema");
+        Database::set_schema_version(&conn, 1).expect("failed to set version");
+        conn.execute_batch(
+            "INSERT INTO installed_kegs VALUES ('jq', '1.7.1', 'key123', 1234567890);
+             INSERT INTO store_refs VALUES ('key123', 1);",
+        )
+        .expect("failed to seed v1 data");
+
+        Database::migrate(&conn).expect("migration failed");
+        assert_eq!(
+            Database::get_schema_version(&conn).unwrap(),
+            Database::SCHEMA_VERSION
+        );
+
+        let db = Database { conn };
+        let installed = db.list_installed().unwrap();
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].name, "jq");
+        assert_eq!(installed[0].store_key, "key123");
+        assert_eq!(installed[0].reason, InstallReason::Retained);
+        assert_eq!(db.get_store_refcount("key123"), 1);
+    }
+
+    #[test]
+    fn transient_install_is_recorded_as_transient() {
+        let mut db = Database::in_memory().unwrap();
+
+        {
+            let tx = db.transaction().unwrap();
+            tx.record_install("jq", "1.7.1", "key", InstallReason::Transient)
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        assert!(db.get_installed("jq").unwrap().reason.is_transient());
+    }
+
+    #[test]
+    fn explicit_install_promotes_a_transient_keg() {
+        let mut db = Database::in_memory().unwrap();
+
+        {
+            let tx = db.transaction().unwrap();
+            tx.record_install("jq", "1.7.1", "key", InstallReason::Transient)
+                .unwrap();
+            tx.record_install("jq", "1.7.1", "key", InstallReason::Retained)
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        assert_eq!(
+            db.get_installed("jq").unwrap().reason,
+            InstallReason::Retained
+        );
+    }
+
+    /// The direction that matters for safety: nothing `zbx` does may make an
+    /// explicitly installed formula disappear from `zb list` or become fair
+    /// game for `zb gc`.
+    #[test]
+    fn transient_install_never_demotes_a_retained_keg() {
+        let mut db = Database::in_memory().unwrap();
+
+        {
+            let tx = db.transaction().unwrap();
+            tx.record_install("jq", "1.7.1", "key", InstallReason::Retained)
+                .unwrap();
+            tx.record_install("jq", "1.7.1", "key", InstallReason::Transient)
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        assert_eq!(
+            db.get_installed("jq").unwrap().reason,
+            InstallReason::Retained
+        );
+    }
+
+    #[test]
+    fn reinstall_updates_version_without_touching_the_reason() {
+        let mut db = Database::in_memory().unwrap();
+
+        {
+            let tx = db.transaction().unwrap();
+            tx.record_install("jq", "1.7.0", "old", InstallReason::Transient)
+                .unwrap();
+            tx.record_install("jq", "1.7.1", "new", InstallReason::Transient)
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        let keg = db.get_installed("jq").unwrap();
+        assert_eq!(keg.version, "1.7.1");
+        assert!(keg.reason.is_transient());
+    }
+
+    #[test]
+    fn unknown_reason_values_decay_to_retained() {
+        let mut db = Database::in_memory().unwrap();
+
+        {
+            let tx = db.transaction().unwrap();
+            tx.record_install("jq", "1.7.1", "key", InstallReason::Transient)
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        db.conn
+            .execute(
+                "UPDATE installed_kegs SET install_reason = 'from-the-future'",
+                [],
+            )
+            .unwrap();
+
+        assert_eq!(
+            db.get_installed("jq").unwrap().reason,
+            InstallReason::Retained
+        );
     }
 }

@@ -10,6 +10,7 @@ use crate::cellar::materialize::Cellar;
 use crate::installer::cask::resolve_cask;
 use crate::network::download::{DownloadProgressCallback, DownloadRequest, DownloadResult};
 use crate::progress::InstallProgress;
+use crate::storage::db::InstallReason;
 
 use super::{Installer, MAX_CORRUPTION_RETRIES, PlannedInstall};
 
@@ -20,6 +21,7 @@ impl Installer {
         download: &DownloadResult,
         download_progress: &Option<DownloadProgressCallback>,
         link: bool,
+        reason: InstallReason,
         report: &impl Fn(InstallProgress),
     ) -> Result<(), Error> {
         let InstallMethod::Bottle(ref bottle) = item.method else {
@@ -50,7 +52,7 @@ impl Installer {
             Self::cleanup_materialized(&self.cellar, formula_name, &version);
         })?;
 
-        tx.record_install(install_name, &version, store_key)
+        tx.record_install(install_name, &version, store_key, reason)
             .inspect_err(|_| {
                 Self::cleanup_materialized(&self.cellar, formula_name, &version);
             })?;
@@ -278,7 +280,12 @@ impl Installer {
         };
 
         let tx = self.db.transaction()?;
-        tx.record_install(&cask.install_name, &cask.version, &cask.sha256)?;
+        tx.record_install(
+            &cask.install_name,
+            &cask.version,
+            &cask.sha256,
+            InstallReason::Retained,
+        )?;
         for linked in &linked_files {
             tx.record_linked_file(
                 &cask.install_name,
@@ -520,8 +527,13 @@ mod tests {
         let db_path = tmp.path().join("zb.sqlite3");
         let mut db = Database::open(&db_path).unwrap();
         let tx = db.transaction().unwrap();
-        tx.record_install("hashicorp/tap/terraform", "1.10.0", "store-key")
-            .unwrap();
+        tx.record_install(
+            "hashicorp/tap/terraform",
+            "1.10.0",
+            "store-key",
+            InstallReason::Retained,
+        )
+        .unwrap();
         tx.commit().unwrap();
 
         let keg = db.get_installed("hashicorp/tap/terraform").unwrap();

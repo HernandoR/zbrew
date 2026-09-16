@@ -7,6 +7,9 @@ pub fn execute(installer: &mut zb_io::Installer, formula: String) -> Result<(), 
         print_field("Version:", &keg.version);
         print_field("Store key:", &keg.store_key[..12]);
         print_field("Installed:", format_timestamp(keg.installed_at));
+        if keg.reason.is_transient() {
+            print_field("Kind:", "temporary install (removed by zb gc)");
+        }
     } else {
         println!("Formula '{}' is not installed.", formula);
     }
