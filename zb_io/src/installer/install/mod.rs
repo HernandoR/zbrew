@@ -6,6 +6,8 @@ mod source;
 mod uninstall;
 mod upgrade;
 
+pub use uninstall::GcOutcome;
+
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,7 +21,7 @@ use crate::network::cache::ApiCache;
 use crate::network::download::{DownloadProgressCallback, DownloadRequest, ParallelDownloader};
 use crate::progress::{InstallProgress, ProgressCallback};
 use crate::storage::blob::BlobCache;
-use crate::storage::db::Database;
+use crate::storage::db::{Database, InstallReason};
 use crate::storage::store::Store;
 
 use zb_core::{Error, Formula, InstallMethod};
@@ -61,9 +63,22 @@ pub struct PlannedInstall {
     pub method: InstallMethod,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct InstallPlan {
     pub items: Vec<PlannedInstall>,
+    /// How the kegs this plan installs should be registered. Plans are
+    /// retained unless a caller says otherwise, so only `zb run` has to
+    /// opt in to disposable kegs.
+    pub reason: InstallReason,
+}
+
+impl InstallPlan {
+    /// Mark every keg this plan installs as disposable. Used by `zb run` /
+    /// `zbx`, which materialize a formula only to execute it once.
+    pub fn transient(mut self) -> Self {
+        self.reason = InstallReason::Transient;
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -148,6 +163,7 @@ impl Installer {
             }
         };
 
+        let reason = plan.reason;
         let (bottle_items, source_items): (Vec<_>, Vec<_>) = plan
             .items
             .into_iter()
@@ -194,6 +210,7 @@ impl Installer {
                                 &download,
                                 &download_progress,
                                 link,
+                                reason,
                                 &report,
                             )
                             .await
@@ -219,7 +236,7 @@ impl Installer {
             });
 
             match self
-                .install_from_source(item, build_plan, link, &report)
+                .install_from_source(item, build_plan, link, reason, &report)
                 .await
             {
                 Ok(()) => installed += 1,

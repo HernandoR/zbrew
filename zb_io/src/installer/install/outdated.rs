@@ -44,8 +44,18 @@ impl Installer {
         }
     }
 
+    /// Transient kegs are skipped: they exist only until the next `zb gc`,
+    /// so reporting them as outdated -- and upgrading them, since `zb upgrade`
+    /// with no arguments works off this list -- would spend a download on a
+    /// package that is about to be deleted. `is_outdated` still answers for
+    /// them, so `zb upgrade <name>` by name keeps working.
     pub async fn check_outdated(&self) -> Result<(Vec<OutdatedPackage>, Vec<String>), Error> {
-        let installed = self.db.list_installed()?;
+        let installed: Vec<_> = self
+            .db
+            .list_installed()?
+            .into_iter()
+            .filter(|keg| !keg.reason.is_transient())
+            .collect();
         if installed.is_empty() {
             return Ok((Vec::new(), Vec::new()));
         }
@@ -139,7 +149,7 @@ mod tests {
     use crate::cellar::Cellar;
     use crate::network::api::ApiClient;
     use crate::storage::blob::BlobCache;
-    use crate::storage::db::Database;
+    use crate::storage::db::{Database, InstallReason};
     use crate::storage::store::Store;
     use crate::{Installer, Linker};
 
@@ -246,7 +256,8 @@ mod tests {
 
         {
             let tx = installer.db.transaction().unwrap();
-            tx.record_install("jq", "1.7.1", sha).unwrap();
+            tx.record_install("jq", "1.7.1", sha, InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -268,7 +279,8 @@ mod tests {
 
         {
             let tx = installer.db.transaction().unwrap();
-            tx.record_install("jq", "1.7.0", "old_sha256").unwrap();
+            tx.record_install("jq", "1.7.0", "old_sha256", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -303,7 +315,8 @@ mod tests {
 
         {
             let tx = installer.db.transaction().unwrap();
-            tx.record_install("jq", "1.7.1", "source:jq:1.7.1").unwrap();
+            tx.record_install("jq", "1.7.1", "source:jq:1.7.1", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -327,7 +340,8 @@ mod tests {
 
         {
             let tx = installer.db.transaction().unwrap();
-            tx.record_install("jq", "1.6", "source:jq:1.6").unwrap();
+            tx.record_install("jq", "1.6", "source:jq:1.6", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -362,8 +376,10 @@ mod tests {
 
         {
             let tx = installer.db.transaction().unwrap();
-            tx.record_install("good", "1.0.0", "old_sha").unwrap();
-            tx.record_install("bad", "1.0.0", "old_sha").unwrap();
+            tx.record_install("good", "1.0.0", "old_sha", InstallReason::Retained)
+                .unwrap();
+            tx.record_install("bad", "1.0.0", "old_sha", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 
@@ -393,7 +409,8 @@ mod tests {
 
         {
             let tx = installer.db.transaction().unwrap();
-            tx.record_install("nobottle", "1.0.0", "old_sha").unwrap();
+            tx.record_install("nobottle", "1.0.0", "old_sha", InstallReason::Retained)
+                .unwrap();
             tx.commit().unwrap();
         }
 

@@ -7,6 +7,21 @@ use zb_core::{Error, formula_token};
 use super::Installer;
 use crate::storage::db::Database;
 
+/// What a `gc` run reclaimed.
+#[derive(Debug, Default)]
+pub struct GcOutcome {
+    /// Names of transient kegs that were uninstalled.
+    pub removed_packages: Vec<String>,
+    /// Store entries deleted because nothing references them any more.
+    pub removed_store_keys: Vec<String>,
+}
+
+impl GcOutcome {
+    pub fn is_empty(&self) -> bool {
+        self.removed_packages.is_empty() && self.removed_store_keys.is_empty()
+    }
+}
+
 impl Installer {
     pub fn uninstall(&mut self, name: &str) -> Result<(), Error> {
         let installed = self.db.get_installed(name).ok_or(Error::NotInstalled {
@@ -41,17 +56,46 @@ impl Installer {
         Ok(())
     }
 
-    pub fn gc(&mut self) -> Result<Vec<String>, Error> {
+    /// Reclaim disposable state: first the kegs `zb run`/`zbx` materialized
+    /// to execute a command once, then every store entry left unreferenced.
+    ///
+    /// Uninstalling the transient kegs before sweeping the store is what
+    /// makes the reclaim complete -- their store entries only drop to zero
+    /// references once the keg rows are gone, so a sweep-only gc would leave
+    /// both the cellar directories and their blobs behind.
+    ///
+    /// Only kegs still marked transient are removed. Anything a `zb install`
+    /// has since depended on was promoted to retained when that install
+    /// re-recorded its dependency closure, so this cannot delete a package
+    /// something the user keeps is linked against.
+    pub fn gc(&mut self) -> Result<GcOutcome, Error> {
+        let transient: Vec<(String, String)> = self
+            .db
+            .list_installed()?
+            .into_iter()
+            .filter(|keg| keg.reason.is_transient())
+            .map(|keg| (keg.name, keg.version))
+            .collect();
+
+        let mut removed_packages = Vec::new();
+        for (name, version) in transient {
+            self.uninstall_by_version(&name, &version)?;
+            removed_packages.push(name);
+        }
+
         let unreferenced = self.db.get_unreferenced_store_keys()?;
-        let mut removed = Vec::new();
+        let mut removed_store_keys = Vec::new();
 
         for store_key in unreferenced {
             self.store.remove_entry(&store_key)?;
             self.db.delete_store_ref(&store_key)?;
-            removed.push(store_key);
+            removed_store_keys.push(store_key);
         }
 
-        Ok(removed)
+        Ok(GcOutcome {
+            removed_packages,
+            removed_store_keys,
+        })
     }
 }
 
@@ -278,8 +322,8 @@ mod tests {
         assert!(root.join("store").join(&bottle_sha).exists());
 
         let removed = installer.gc().unwrap();
-        assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0], bottle_sha);
+        assert!(removed.removed_packages.is_empty());
+        assert_eq!(removed.removed_store_keys, vec![bottle_sha.clone()]);
 
         assert!(!root.join("store").join(&bottle_sha).exists());
         assert!(
@@ -644,5 +688,129 @@ end
         assert!(!installer.is_installed("ghost"));
         assert!(link.is_symlink(), "live foreign link was removed");
         assert_eq!(fs::read_link(&link).unwrap(), other);
+    }
+    /// Mount a formula and its bottle on `mock_server`.
+    async fn mount_formula(
+        mock_server: &MockServer,
+        name: &str,
+        deps: &[&str],
+        bottle: &[u8],
+    ) -> String {
+        let sha = sha256_hex(bottle);
+        let tag = get_test_bottle_tag();
+        let deps_json = deps
+            .iter()
+            .map(|d| format!("\"{d}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        let formula_json = format!(
+            r#"{{"name":"{name}","versions":{{"stable":"1.0.0"}},"dependencies":[{deps_json}],"bottle":{{"stable":{{"files":{{"{tag}":{{"url":"{uri}/bottles/{name}.tar.gz","sha256":"{sha}"}}}}}}}}}}"#,
+            uri = mock_server.uri()
+        );
+
+        Mock::given(method("GET"))
+            .and(path(format!("/formula/{name}.json")))
+            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json))
+            .mount(mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path(format!("/bottles/{name}.tar.gz")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle.to_vec()))
+            .mount(mock_server)
+            .await;
+
+        sha
+    }
+
+    fn installer_at(
+        mock_server: &MockServer,
+        root: &std::path::Path,
+        prefix: &std::path::Path,
+    ) -> Installer {
+        fs::create_dir_all(root.join("db")).unwrap();
+        Installer::new(
+            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap(),
+            BlobCache::new(&root.join("cache")).unwrap(),
+            Store::new(root).unwrap(),
+            Cellar::new(root).unwrap(),
+            Linker::new(prefix).unwrap(),
+            Database::open(&root.join("db/zb.sqlite3")).unwrap(),
+            prefix.to_path_buf(),
+            root.join("locks"),
+        )
+    }
+
+    /// The reclaim `zb list` hiding transient kegs would otherwise only
+    /// paper over: gc has to delete the keg row, the cellar directory and
+    /// the store entry. See issue #36.
+    #[tokio::test]
+    async fn gc_reclaims_transient_kegs() {
+        let mock_server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        let bottle = create_bottle_tarball("gcrun");
+        let sha = mount_formula(&mock_server, "gcrun", &[], &bottle).await;
+
+        let mut installer = installer_at(&mock_server, &root, &prefix);
+        let plan = installer.plan(&["gcrun".to_string()]).await.unwrap();
+        installer.execute(plan.transient(), false).await.unwrap();
+
+        assert!(
+            installer
+                .get_installed("gcrun")
+                .unwrap()
+                .reason
+                .is_transient()
+        );
+        assert!(root.join("store").join(&sha).exists());
+
+        let outcome = installer.gc().unwrap();
+        assert_eq!(outcome.removed_packages, vec!["gcrun".to_string()]);
+        assert_eq!(outcome.removed_store_keys, vec![sha.clone()]);
+
+        assert!(!installer.is_installed("gcrun"));
+        assert!(!root.join("store").join(&sha).exists());
+        assert!(!root.join("cellar/gcrun/1.0.0").exists());
+    }
+
+    /// A dependency a `zbx` run left behind must survive gc once something
+    /// the user installed on purpose needs it: `install` re-records its whole
+    /// closure, which promotes the transient row to retained.
+    #[tokio::test]
+    async fn gc_keeps_a_transient_dependency_a_later_install_adopted() {
+        let mock_server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        let dep_bottle = create_bottle_tarball("gcdep");
+        let app_bottle = create_bottle_tarball("gcapp");
+        let dep_sha = mount_formula(&mock_server, "gcdep", &[], &dep_bottle).await;
+        mount_formula(&mock_server, "gcapp", &["gcdep"], &app_bottle).await;
+
+        let mut installer = installer_at(&mock_server, &root, &prefix);
+
+        let plan = installer.plan(&["gcdep".to_string()]).await.unwrap();
+        installer.execute(plan.transient(), false).await.unwrap();
+        assert!(
+            installer
+                .get_installed("gcdep")
+                .unwrap()
+                .reason
+                .is_transient()
+        );
+
+        installer
+            .install(&["gcapp".to_string()], false)
+            .await
+            .unwrap();
+
+        let outcome = installer.gc().unwrap();
+        assert!(outcome.removed_packages.is_empty());
+        assert!(installer.is_installed("gcdep"));
+        assert!(root.join("store").join(&dep_sha).exists());
     }
 }

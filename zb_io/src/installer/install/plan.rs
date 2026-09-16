@@ -24,7 +24,10 @@ impl Installer {
             items.push(self.plan_item(install_name, formula, build_from_source)?);
         }
 
-        Ok(InstallPlan { items })
+        Ok(InstallPlan {
+            items,
+            ..Default::default()
+        })
     }
 
     pub async fn plan_best_effort(
@@ -90,7 +93,13 @@ impl Installer {
             }
         }
 
-        (InstallPlan { items }, failures)
+        (
+            InstallPlan {
+                items,
+                ..Default::default()
+            },
+            failures,
+        )
     }
 
     fn plan_item(
