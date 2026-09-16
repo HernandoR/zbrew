@@ -64,7 +64,14 @@ fn dump_to_file(
         });
     }
 
-    let installed = installer.list_installed()?;
+    // Temporary installs are excluded: a Brewfile records what the user
+    // wants reproduced, and a keg `zb run` created for one command is not
+    // that.
+    let installed: Vec<_> = installer
+        .list_installed()?
+        .into_iter()
+        .filter(|keg| !keg.reason.is_transient())
+        .collect();
     let mut content = String::new();
     for keg in &installed {
         content.push_str(&format!("brew \"{}\"\n", keg.name));

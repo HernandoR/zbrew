@@ -87,6 +87,18 @@ mod tests {
     }
 
     #[test]
+    fn list_hides_temporary_installs_unless_all() {
+        let cli = Cli::try_parse_from(["zb", "list"]).unwrap();
+        assert!(matches!(cli.command, super::Commands::List { all: false }));
+
+        let cli = Cli::try_parse_from(["zb", "list", "--all"]).unwrap();
+        assert!(matches!(cli.command, super::Commands::List { all: true }));
+
+        let cli = Cli::try_parse_from(["zb", "list", "-a"]).unwrap();
+        assert!(matches!(cli.command, super::Commands::List { all: true }));
+    }
+
+    #[test]
     fn outdated_quiet_and_verbose_conflict() {
         let result = Cli::try_parse_from(["zb", "outdated", "--quiet", "--verbose"]);
         assert!(result.is_err());
@@ -136,7 +148,14 @@ pub enum Commands {
         force: bool,
     },
     /// List installed packages
-    List,
+    List {
+        #[arg(
+            long,
+            short = 'a',
+            help = "Include temporary installs created by zb run"
+        )]
+        all: bool,
+    },
     /// Show information about an installed package
     Info {
         #[arg(help = "Name of the installed package")]
