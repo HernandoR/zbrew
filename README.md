@@ -101,8 +101,9 @@ zb outdated                     # list packages with newer versions
 zb upgrade                      # upgrade all outdated packages
 zb upgrade jq wget              # upgrade specific packages
 zb reset                        # uninstall everything
-zb gc                           # garbage collect unused store entries
-zbx jq --version                # run without linking
+zb gc                           # reclaim zbx temporary installs and unused store entries
+zbx jq --version                # run without linking or keeping it
+zb list --all                   # list installed packages, zbx temporaries included
 ```
 
 ## Performance snapshot
