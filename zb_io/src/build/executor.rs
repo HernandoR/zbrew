@@ -12,6 +12,14 @@ use super::source::download_and_extract_source;
 
 const SHIM_RUBY: &str = include_str!("shim.rb");
 
+/// Exit status the shim uses when a formula reaches for a part of the Homebrew
+/// API it does not implement. Kept in sync with ZBREW_UNSUPPORTED_API_EXIT in
+/// shim.rb.
+const UNSUPPORTED_API_EXIT: i32 = 78;
+
+/// How every diagnostic the shim writes to stderr opens.
+const SHIM_ERROR_PREFIX: &str = "Error: ";
+
 pub struct BuildExecutor {
     prefix: PathBuf,
     work_root: PathBuf,
@@ -139,6 +147,15 @@ async fn run_build(
         .map_err(Error::exec("failed reading stderr"))?;
 
     if !status.success() {
+        // An unimplemented corner of the Homebrew API is not a build failure and
+        // has no useful exit code or output tail: the shim already said the whole
+        // of it, so pass that through rather than burying it under a tail.
+        if status.code() == Some(UNSUPPORTED_API_EXIT)
+            && let Some(message) = unsupported_api_message(&stderr_tail)
+        {
+            return Err(Error::ExecutionError { message });
+        }
+
         let mut msg = format!("source build failed (exit code: {:?})", status.code());
         let tail = if !stderr_tail.is_empty() {
             stderr_tail
@@ -153,6 +170,18 @@ async fn run_build(
     }
 
     Ok(())
+}
+
+/// The shim's closing diagnostic begins at the last line it prefixed with
+/// `Error: `; anything earlier in the tail is build output that reached stderr
+/// first. The prefix itself is dropped because the caller adds its own.
+fn unsupported_api_message(stderr_tail: &[String]) -> Option<String> {
+    let start = stderr_tail
+        .iter()
+        .rposition(|line| line.starts_with(SHIM_ERROR_PREFIX))?;
+    let mut lines = stderr_tail[start..].to_vec();
+    lines[0] = lines[0][SHIM_ERROR_PREFIX.len()..].to_string();
+    Some(lines.join("\n"))
 }
 
 async fn stream_output_and_capture_tail<R>(
@@ -557,6 +586,179 @@ end
                 .join("done")
                 .exists()
         );
+    }
+
+    #[test]
+    fn unsupported_api_message_starts_at_the_last_shim_error() {
+        let tail = [
+            "cc: warning: unused argument".to_string(),
+            "Error: an earlier diagnostic".to_string(),
+            "Error: foo uses `MacOS`".to_string(),
+            "       report it upstream".to_string(),
+        ];
+
+        assert_eq!(
+            unsupported_api_message(&tail).unwrap(),
+            "foo uses `MacOS`\n       report it upstream"
+        );
+    }
+
+    #[test]
+    fn unsupported_api_message_needs_a_shim_error() {
+        assert!(unsupported_api_message(&["cc: crashed".to_string()]).is_none());
+        assert!(unsupported_api_message(&[]).is_none());
+    }
+
+    #[tokio::test]
+    async fn run_build_names_an_unimplemented_homebrew_constant() {
+        let Some(ruby) = find_ruby().await.ok() else {
+            return;
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("source");
+        std::fs::create_dir_all(&source_root).unwrap();
+
+        let formula = r#"
+class Foo < Formula
+  def install
+    Xcode.version
+  end
+end
+"#;
+
+        let prefix = tmp.path().join("prefix");
+        let err = run_shim_formula(&ruby, &source_root, &prefix, formula)
+            .await
+            .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("`Xcode`"), "{message}");
+        assert!(message.contains("does not implement"), "{message}");
+        assert!(message.contains("formula.rb:4"), "{message}");
+        assert!(!message.contains("NameError"), "{message}");
+        assert!(!message.contains("shim.rb"), "{message}");
+        assert!(!message.contains("source build failed"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn run_build_names_an_unimplemented_homebrew_method() {
+        let Some(ruby) = find_ruby().await.ok() else {
+            return;
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("source");
+        std::fs::create_dir_all(&source_root).unwrap();
+
+        let formula = r#"
+class Foo < Formula
+  def install
+    MacOS.sdk_path
+  end
+end
+"#;
+
+        let prefix = tmp.path().join("prefix");
+        let err = run_shim_formula(&ruby, &source_root, &prefix, formula)
+            .await
+            .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("sdk_path"), "{message}");
+        assert!(!message.contains("NoMethodError"), "{message}");
+        assert!(!message.contains("shim.rb"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn run_build_reports_a_constant_missing_from_the_formula_body() {
+        let Some(ruby) = find_ruby().await.ok() else {
+            return;
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("source");
+        std::fs::create_dir_all(&source_root).unwrap();
+
+        let formula = r#"
+class Foo < Formula
+  depends_on Xcode
+
+  def install; end
+end
+"#;
+
+        let prefix = tmp.path().join("prefix");
+        let err = run_shim_formula(&ruby, &source_root, &prefix, formula)
+            .await
+            .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("`Xcode`"), "{message}");
+        assert!(!message.contains("shim.rb"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn run_build_resolves_the_macos_alias() {
+        let Some(ruby) = find_ruby().await.ok() else {
+            return;
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("source");
+        std::fs::create_dir_all(&source_root).unwrap();
+
+        // sketchybar's install branches on this exact expression.
+        let formula = r#"
+class Foo < Formula
+  def install
+    raise "MacOS is not OS::Mac" unless MacOS.equal?(OS::Mac)
+    (prefix + "version").write((MacOS.version < 11).to_s)
+  end
+end
+"#;
+
+        let prefix = tmp.path().join("prefix");
+        run_shim_formula(&ruby, &source_root, &prefix, formula)
+            .await
+            .unwrap();
+
+        assert!(
+            prefix
+                .join("Cellar")
+                .join("foo")
+                .join("1.0.0")
+                .join("version")
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_build_keeps_the_backtrace_for_a_plain_build_failure() {
+        let Some(ruby) = find_ruby().await.ok() else {
+            return;
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("source");
+        std::fs::create_dir_all(&source_root).unwrap();
+
+        let formula = r#"
+class Foo < Formula
+  def install
+    raise "the build itself blew up"
+  end
+end
+"#;
+
+        let prefix = tmp.path().join("prefix");
+        let err = run_shim_formula(&ruby, &source_root, &prefix, formula)
+            .await
+            .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("source build failed"), "{message}");
+        assert!(message.contains("the build itself blew up"), "{message}");
     }
 
     #[tokio::test]
