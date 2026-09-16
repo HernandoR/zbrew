@@ -67,6 +67,12 @@ module OS
   end
 end
 
+# Homebrew spells the same module both ways: `OS::Mac` is the definition and
+# `MacOS` is the alias formulas actually write. Aliasing exposes what this shim
+# already implements; it does not widen it, so `MacOS.sdk_path` and the rest of
+# the module still fail, now as a named unsupported-API error.
+MacOS = OS::Mac
+
 class MacOSVersion
   include Comparable
 
@@ -678,6 +684,48 @@ def shared_library(name, version = nil)
   end
 end
 
+# Exit status telling zbrew the formula reached for a part of the Homebrew API
+# this shim does not implement. Kept in sync with UNSUPPORTED_API_EXIT in
+# executor.rs.
+ZBREW_UNSUPPORTED_API_EXIT = 78
+
+# Every constant and method a formula names that the shim never defined arrives
+# as a NameError (NoMethodError is one). Ruby's default handler would print the
+# exception with a backtrace naming this file, which is a zbrew internal nobody
+# can act on. Report the missing name instead, and only around formula code, so
+# a NameError from a shim bug still gets its backtrace.
+def zbrew_guard_unsupported_api
+  yield
+rescue NameError => e
+  $stderr.puts "Error: #{FORMULA_NAME} uses `#{zbrew_missing_api(e)}`, which zbrew's Homebrew " \
+               "compatibility shim does not implement#{zbrew_formula_site(e)}."
+  $stderr.puts "       zbrew implements a subset of the Homebrew formula API, so this formula " \
+               "cannot be built from source. Please report it at " \
+               "https://github.com/HernandoR/zbrew/issues so support can be added."
+  exit ZBREW_UNSUPPORTED_API_EXIT
+end
+
+def zbrew_missing_api(error)
+  return error.name.to_s unless error.is_a?(NoMethodError)
+
+  receiver = begin
+    error.receiver
+  rescue ArgumentError, NameError
+    return error.name.to_s
+  end
+
+  return "#{receiver}.#{error.name}" if receiver.is_a?(Module)
+  "#{receiver.class}##{error.name}"
+end
+
+# The frame that named the missing thing, as a bare basename: the formula lives
+# in a zbrew-managed temporary directory whose path means nothing to the reader.
+def zbrew_formula_site(error)
+  shim = File.basename(__FILE__)
+  frame = Array(error.backtrace).find { |f| File.basename(f.split(":").first.to_s) != shim }
+  frame ? " (#{File.basename(frame)})" : ""
+end
+
 formula_raw = File.read(FORMULA_FILE)
 end_marker_idx = formula_raw.index(/^__END__\s*$/)
 FORMULA_DATA_CONTENT = end_marker_idx ? formula_raw[(formula_raw.index("\n", end_marker_idx) + 1)..] : nil
@@ -685,7 +733,7 @@ FORMULA_DATA_CONTENT = end_marker_idx ? formula_raw[(formula_raw.index("\n", end
 ENV["HOMEBREW_PREFIX"] = ZBREW_PREFIX
 ENV["HOMEBREW_CELLAR"] = ZBREW_CELLAR
 
-load FORMULA_FILE
+zbrew_guard_unsupported_api { load FORMULA_FILE }
 
 formula_class = ObjectSpace.each_object(Class).find { |c| c < Formula && c != Formula }
 unless formula_class
@@ -738,5 +786,5 @@ instance = formula_class.new
 
 puts "==> Building #{FORMULA_NAME} #{FORMULA_VERSION}"
 FileUtils.mkdir_p(instance.prefix.to_s)
-instance.install
+zbrew_guard_unsupported_api { instance.install }
 puts "==> Build complete: #{FORMULA_NAME} #{FORMULA_VERSION}"

@@ -4,6 +4,7 @@ use std::path::Path;
 use tracing::warn;
 use zb_core::{Error, InstallMethod, formula_token};
 
+use crate::cellar::bottle_prefix::install_bottle_prefix_files;
 use crate::cellar::link::Linker;
 use crate::cellar::materialize::Cellar;
 use crate::installer::cask::resolve_cask;
@@ -62,6 +63,18 @@ impl Installer {
 
         if let Err(e) = self.linker.link_opt(&keg_path) {
             warn!(formula = %install_name, error = %e, "failed to create opt link");
+        }
+
+        // Configuration and state a bottle ships for the shared prefix are
+        // staged at `<keg>/.bottle/{etc,var}`, out of the linker's reach, and
+        // are copied rather than linked because the user owns them. This runs
+        // before the link step and for keg-only formulae too, matching where
+        // Homebrew pours them (issue #40 / upstream lucasgelfond/zerobrew#390).
+        if let Err(e) = install_bottle_prefix_files(&keg_path, &self.prefix) {
+            report(InstallProgress::InstallCompleted {
+                name: formula_name.clone(),
+            });
+            return Err(e);
         }
 
         if link && !item.formula.is_keg_only() {
