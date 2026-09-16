@@ -16,8 +16,8 @@ pub use extraction::patch::relocation::{
     DEFAULT_MACOS_PREFIX, PrefixTooLong, check_prefix_fits, homebrew_prefix_for_host,
 };
 pub use installer::{
-    DiagnosticReport, ExecuteResult, HomebrewMigrationPackages, HomebrewPackage, InstallPlan,
-    Installer, OutdatedPackage, PlanFailure, RepairSummary, create_installer,
+    DiagnosticReport, ExecuteResult, GcOutcome, HomebrewMigrationPackages, HomebrewPackage,
+    InstallPlan, Installer, OutdatedPackage, PlanFailure, RepairSummary, create_installer,
     get_homebrew_packages,
 };
 pub use network::{
@@ -26,4 +26,6 @@ pub use network::{
 pub use path::{validate_destructive_path, validate_privileged_path};
 pub use progress::{InstallProgress, ProgressCallback};
 pub use ssl::{find_ca_bundle_from_prefix, find_ca_dir};
-pub use storage::{BlobCache, Database, InstalledKeg, KegFileRecord, Store, StoreRef};
+pub use storage::{
+    BlobCache, Database, InstallReason, InstalledKeg, KegFileRecord, Store, StoreRef,
+};

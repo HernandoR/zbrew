@@ -6,6 +6,8 @@ mod source;
 mod uninstall;
 mod upgrade;
 
+pub use uninstall::GcOutcome;
+
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,7 +21,7 @@ use crate::network::cache::ApiCache;
 use crate::network::download::{DownloadProgressCallback, DownloadRequest, ParallelDownloader};
 use crate::progress::{InstallProgress, ProgressCallback};
 use crate::storage::blob::BlobCache;
-use crate::storage::db::Database;
+use crate::storage::db::{Database, InstallReason};
 use crate::storage::store::Store;
 
 use zb_core::{Error, Formula, InstallMethod};
@@ -61,9 +63,22 @@ pub struct PlannedInstall {
     pub method: InstallMethod,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct InstallPlan {
     pub items: Vec<PlannedInstall>,
+    /// How the kegs this plan installs should be registered. Plans are
+    /// retained unless a caller says otherwise, so only `zb run` has to
+    /// opt in to disposable kegs.
+    pub reason: InstallReason,
+}
+
+impl InstallPlan {
+    /// Mark every keg this plan installs as disposable. Used by `zb run` /
+    /// `zbx`, which materialize a formula only to execute it once.
+    pub fn transient(mut self) -> Self {
+        self.reason = InstallReason::Transient;
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -148,6 +163,7 @@ impl Installer {
             }
         };
 
+        let reason = plan.reason;
         let (bottle_items, source_items): (Vec<_>, Vec<_>) = plan
             .items
             .into_iter()
@@ -194,6 +210,7 @@ impl Installer {
                                 &download,
                                 &download_progress,
                                 link,
+                                reason,
                                 &report,
                             )
                             .await
@@ -219,7 +236,7 @@ impl Installer {
             });
 
             match self
-                .install_from_source(item, build_plan, link, &report)
+                .install_from_source(item, build_plan, link, reason, &report)
                 .await
             {
                 Ok(()) => installed += 1,
@@ -548,6 +565,91 @@ mod tests {
         let installed = installer.db.get_installed("testpkg");
         assert!(installed.is_some());
         assert_eq!(installed.unwrap().version, "1.0.0");
+    }
+
+    /// Configuration a bottle ships arrives under `<keg>/.bottle/etc`, which
+    /// the linker never walks, so before #40 it was silently dropped.
+    #[tokio::test]
+    async fn install_copies_staged_etc_config_into_the_prefix() {
+        let mock_server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+
+        let bottle = create_bottle_tarball_with_entries(
+            "confpkg",
+            "1.0.0",
+            &["bin/confpkg", ".bottle/etc/confpkg/confpkg.ini"],
+        );
+        let bottle_sha = sha256_hex(&bottle);
+
+        let tag = get_test_bottle_tag();
+        let formula_json = format!(
+            r#"{{
+                "name": "confpkg",
+                "versions": {{ "stable": "1.0.0" }},
+                "dependencies": [],
+                "bottle": {{
+                    "stable": {{
+                        "files": {{
+                            "{tag}": {{
+                                "url": "{}/bottles/confpkg-1.0.0.{tag}.bottle.tar.gz",
+                                "sha256": "{bottle_sha}"
+                            }}
+                        }}
+                    }}
+                }}
+            }}"#,
+            mock_server.uri(),
+        );
+
+        Mock::given(method("GET"))
+            .and(path("/formula/confpkg.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(&formula_json))
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/bottles/confpkg-1.0.0.{tag}.bottle.tar.gz")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle))
+            .mount(&mock_server)
+            .await;
+
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+        fs::create_dir_all(root.join("db")).unwrap();
+
+        let api_client =
+            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
+        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
+        let store = Store::new(&root).unwrap();
+        let cellar = Cellar::new(&root).unwrap();
+        let linker = Linker::new(&prefix).unwrap();
+        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
+
+        let mut installer = Installer::new(
+            api_client,
+            blob_cache,
+            store,
+            cellar,
+            linker,
+            db,
+            prefix.clone(),
+            root.join("locks"),
+        );
+
+        installer
+            .install(&["confpkg".to_string()], true)
+            .await
+            .unwrap();
+
+        let config = prefix.join("etc/confpkg/confpkg.ini");
+        assert!(config.is_file(), "staged etc config was not installed");
+        assert!(
+            !config.is_symlink(),
+            "etc config must be a copy, not a link"
+        );
+        assert!(
+            !prefix.join(".bottle").exists(),
+            "the staging directory itself must not be installed"
+        );
     }
 
     #[tokio::test]

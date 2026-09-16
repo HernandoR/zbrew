@@ -4,11 +4,13 @@ use std::path::Path;
 use tracing::warn;
 use zb_core::{Error, InstallMethod, formula_token};
 
+use crate::cellar::bottle_prefix::install_bottle_prefix_files;
 use crate::cellar::link::Linker;
 use crate::cellar::materialize::Cellar;
 use crate::installer::cask::resolve_cask;
 use crate::network::download::{DownloadProgressCallback, DownloadRequest, DownloadResult};
 use crate::progress::InstallProgress;
+use crate::storage::db::InstallReason;
 
 use super::{Installer, MAX_CORRUPTION_RETRIES, PlannedInstall};
 
@@ -19,6 +21,7 @@ impl Installer {
         download: &DownloadResult,
         download_progress: &Option<DownloadProgressCallback>,
         link: bool,
+        reason: InstallReason,
         report: &impl Fn(InstallProgress),
     ) -> Result<(), Error> {
         let InstallMethod::Bottle(ref bottle) = item.method else {
@@ -49,7 +52,7 @@ impl Installer {
             Self::cleanup_materialized(&self.cellar, formula_name, &version);
         })?;
 
-        tx.record_install(install_name, &version, store_key)
+        tx.record_install(install_name, &version, store_key, reason)
             .inspect_err(|_| {
                 Self::cleanup_materialized(&self.cellar, formula_name, &version);
             })?;
@@ -60,6 +63,18 @@ impl Installer {
 
         if let Err(e) = self.linker.link_opt(&keg_path) {
             warn!(formula = %install_name, error = %e, "failed to create opt link");
+        }
+
+        // Configuration and state a bottle ships for the shared prefix are
+        // staged at `<keg>/.bottle/{etc,var}`, out of the linker's reach, and
+        // are copied rather than linked because the user owns them. This runs
+        // before the link step and for keg-only formulae too, matching where
+        // Homebrew pours them (issue #40 / upstream lucasgelfond/zerobrew#390).
+        if let Err(e) = install_bottle_prefix_files(&keg_path, &self.prefix) {
+            report(InstallProgress::InstallCompleted {
+                name: formula_name.clone(),
+            });
+            return Err(e);
         }
 
         if link && !item.formula.is_keg_only() {
@@ -265,7 +280,12 @@ impl Installer {
         };
 
         let tx = self.db.transaction()?;
-        tx.record_install(&cask.install_name, &cask.version, &cask.sha256)?;
+        tx.record_install(
+            &cask.install_name,
+            &cask.version,
+            &cask.sha256,
+            InstallReason::Retained,
+        )?;
         for linked in &linked_files {
             tx.record_linked_file(
                 &cask.install_name,
@@ -507,8 +527,13 @@ mod tests {
         let db_path = tmp.path().join("zb.sqlite3");
         let mut db = Database::open(&db_path).unwrap();
         let tx = db.transaction().unwrap();
-        tx.record_install("hashicorp/tap/terraform", "1.10.0", "store-key")
-            .unwrap();
+        tx.record_install(
+            "hashicorp/tap/terraform",
+            "1.10.0",
+            "store-key",
+            InstallReason::Retained,
+        )
+        .unwrap();
         tx.commit().unwrap();
 
         let keg = db.get_installed("hashicorp/tap/terraform").unwrap();

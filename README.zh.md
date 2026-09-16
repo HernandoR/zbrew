@@ -96,8 +96,9 @@ zb outdated                     # 列出有新版本可用的软件包
 zb upgrade                      # 升级所有已过期的软件包
 zb upgrade jq wget              # 升级指定的软件包
 zb reset                        # 卸载所有内容
-zb gc                           # 垃圾回收未使用的存储条目
-zbx jq --version                # 在不链接的情况下运行
+zb gc                           # 回收 zbx 临时安装和未使用的存储条目
+zbx jq --version                # 在不链接、不保留的情况下运行
+zb list --all                   # 列出已安装的软件包，包括 zbx 临时安装
 ```
 
 ## 性能快照 (Performance snapshot)
