@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Configuration a formula ships is installed again. A bottle is built with `HOMEBREW_PREFIX/etc` and `HOMEBREW_PREFIX/var` redirected into `<keg>/.bottle/`, so php's `php.ini` arrives at `<keg>/.bottle/etc/php/8.5/php.ini` and never at `<keg>/etc/`, where the linker looks — every such file was unpacked into the Cellar and then ignored, leaving `$ZBREW_PREFIX/etc` empty. They are now copied into the prefix, not symlinked, because they belong to the user: an upgrade whose bottle carries a different version of a file you have edited leaves yours alone and writes the new one beside it as `<name>.default`, and an untouched file is not rewritten at all ([#40](https://github.com/HernandoR/zbrew/issues/40), [upstream #390](https://github.com/lucasgelfond/zerobrew/issues/390))
 - The rename to `zbrew` had rewritten `zerobrew.rs` — upstream's domain, which this fork does not control — into `zbrew.rs`, which does not exist. It appeared in the banner `install.sh` prints after a successful install, and in the very warning whose job is to steer people away from upstream's installer; naming a domain that resolves to nothing made that warning protect no one. The READMEs name upstream's domain again, and the installer points at this repository instead of a docs site the fork does not own
 
 ## [0.4.0] - 2026-09-14
