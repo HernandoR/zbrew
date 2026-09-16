@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Refresh `Cargo.lock` for RUSTSEC-2026-0285: `rustls` 0.23.45, which rejects TLS 1.3 handshake messages that span a key change as RFC 8446 section 5.1 requires. The bump carries `aws-lc-rs` 1.18.1, `aws-lc-sys` 0.45.0 and `rustls-webpki` 0.103.15 with it, because 0.23.45 will not resolve against the pinned `aws-lc-rs` otherwise. The workspace range `>=0.23.26, <0.24` is unchanged and needed no edit
+
 ### Fixed
 - A formula that names a constant or method the Ruby formula shim does not define no longer aborts with a raw Ruby `NameError` and a backtrace pointing at `zbrew_shim.rb`, an internal file nobody can act on. The shim now catches it around the two places formula code runs, names what was missing and where the formula asked for it, and says that zbrew implements only a subset of the Homebrew formula API; a `NameError` from a shim bug still gets its backtrace. Installing `FelixKratz/formulae/sketchybar` was the reported case: its `install` branches on `MacOS.version`, and the shim defined `OS::Mac` without the `MacOS` alias Homebrew gives the same module, so a capability it already had was unreachable. That alias is now in place ([#33](https://github.com/HernandoR/zbrew/issues/33), [upstream #348](https://github.com/lucasgelfond/zerobrew/issues/348))
 - The rename to `zbrew` had rewritten `zerobrew.rs` — upstream's domain, which this fork does not control — into `zbrew.rs`, which does not exist. It appeared in the banner `install.sh` prints after a successful install, and in the very warning whose job is to steer people away from upstream's installer; naming a domain that resolves to nothing made that warning protect no one. The READMEs name upstream's domain again, and the installer points at this repository instead of a docs site the fork does not own
