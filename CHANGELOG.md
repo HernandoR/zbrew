@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Refresh `Cargo.lock` for RUSTSEC-2026-0285: `rustls` 0.23.45, which rejects TLS 1.3 handshake messages that span a key change as RFC 8446 section 5.1 requires. The bump carries `aws-lc-rs` 1.18.1, `aws-lc-sys` 0.45.0 and `rustls-webpki` 0.103.15 with it, because 0.23.45 will not resolve against the pinned `aws-lc-rs` otherwise. The workspace range `>=0.23.26, <0.24` is unchanged and needed no edit
+
 ### Fixed
 - The rename to `zbrew` had rewritten `zerobrew.rs` — upstream's domain, which this fork does not control — into `zbrew.rs`, which does not exist. It appeared in the banner `install.sh` prints after a successful install, and in the very warning whose job is to steer people away from upstream's installer; naming a domain that resolves to nothing made that warning protect no one. The READMEs name upstream's domain again, and the installer points at this repository instead of a docs site the fork does not own
 
