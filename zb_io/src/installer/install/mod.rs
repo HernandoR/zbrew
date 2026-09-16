@@ -550,6 +550,91 @@ mod tests {
         assert_eq!(installed.unwrap().version, "1.0.0");
     }
 
+    /// Configuration a bottle ships arrives under `<keg>/.bottle/etc`, which
+    /// the linker never walks, so before #40 it was silently dropped.
+    #[tokio::test]
+    async fn install_copies_staged_etc_config_into_the_prefix() {
+        let mock_server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+
+        let bottle = create_bottle_tarball_with_entries(
+            "confpkg",
+            "1.0.0",
+            &["bin/confpkg", ".bottle/etc/confpkg/confpkg.ini"],
+        );
+        let bottle_sha = sha256_hex(&bottle);
+
+        let tag = get_test_bottle_tag();
+        let formula_json = format!(
+            r#"{{
+                "name": "confpkg",
+                "versions": {{ "stable": "1.0.0" }},
+                "dependencies": [],
+                "bottle": {{
+                    "stable": {{
+                        "files": {{
+                            "{tag}": {{
+                                "url": "{}/bottles/confpkg-1.0.0.{tag}.bottle.tar.gz",
+                                "sha256": "{bottle_sha}"
+                            }}
+                        }}
+                    }}
+                }}
+            }}"#,
+            mock_server.uri(),
+        );
+
+        Mock::given(method("GET"))
+            .and(path("/formula/confpkg.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(&formula_json))
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/bottles/confpkg-1.0.0.{tag}.bottle.tar.gz")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle))
+            .mount(&mock_server)
+            .await;
+
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+        fs::create_dir_all(root.join("db")).unwrap();
+
+        let api_client =
+            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
+        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
+        let store = Store::new(&root).unwrap();
+        let cellar = Cellar::new(&root).unwrap();
+        let linker = Linker::new(&prefix).unwrap();
+        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
+
+        let mut installer = Installer::new(
+            api_client,
+            blob_cache,
+            store,
+            cellar,
+            linker,
+            db,
+            prefix.clone(),
+            root.join("locks"),
+        );
+
+        installer
+            .install(&["confpkg".to_string()], true)
+            .await
+            .unwrap();
+
+        let config = prefix.join("etc/confpkg/confpkg.ini");
+        assert!(config.is_file(), "staged etc config was not installed");
+        assert!(
+            !config.is_symlink(),
+            "etc config must be a copy, not a link"
+        );
+        assert!(
+            !prefix.join(".bottle").exists(),
+            "the staging directory itself must not be installed"
+        );
+    }
+
     #[tokio::test]
     async fn install_with_dependencies() {
         let mock_server = MockServer::start().await;
