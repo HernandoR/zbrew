@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `man zb` opens a manual page. There was none — the CLI shipped no roff page at all, so `man` answered "No manual entry for zb" on every install. `zb man` renders the manual from the same `clap` command tree the parser and the shell completions are built from: to stdout, or, given `--output-dir`, as `zb.1` plus a page per subcommand (`zb-install.1`, `zb-bundle-dump.1`, and so on), which is what the cross-references in `zb.1`'s SUBCOMMANDS section point at and where a subcommand's own options are documented. `install.sh` and `just install` generate the pages with the binary they have just installed, so the manual cannot describe a version other than the one on disk, and write them to `$ZBREW_MAN/man1` — by default the `share/man` directory beside `$ZBREW_BIN`, which is where `man` looks for a command it finds on `PATH`. Pages left by a previous install are removed first, so a renamed subcommand leaves none behind, and a manual that cannot be written is a warning rather than a failed install ([#58](https://github.com/HernandoR/zbrew/issues/58), [upstream #349](https://github.com/lucasgelfond/zerobrew/issues/349))
+
 ### Changed
 - Refresh `Cargo.lock` for RUSTSEC-2026-0285: `rustls` 0.23.45, which rejects TLS 1.3 handshake messages that span a key change as RFC 8446 section 5.1 requires. The bump carries `aws-lc-rs` 1.18.1, `aws-lc-sys` 0.45.0 and `rustls-webpki` 0.103.15 with it, because 0.23.45 will not resolve against the pinned `aws-lc-rs` otherwise. The workspace range `>=0.23.26, <0.24` is unchanged and needed no edit
 

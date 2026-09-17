@@ -70,7 +70,7 @@ out in the Discord to give us a heads up or open an issue first to discuss your 
 This project includes a `Justfile`, Install [just](https://github.com/casey/just) and use these commands instead of `cargo` (for ease of development):
 
 - `just build` Check formatting, lint, then build the binary (Builds debug binary)
-- `just install` Build and install zb to $HOME/.local/bin (Customizable with `$ZBREW_BIN`)
+- `just install` Build and install zb to $HOME/.local/bin (Customizable with `$ZBREW_BIN`), along with the man pages `zb man` generates (Customizable with `$ZBREW_MAN`)
 - `just uninstall` Remove all zbrew installations and configurations
 - `just fmt` Format code with rustfmt
 - `just fmt-check` Check code formatting
@@ -78,6 +78,11 @@ This project includes a `Justfile`, Install [just](https://github.com/casey/just
 - `just test` Run all workspace tests (unit & integration)
 
 Before creating a PR make sure you `build` your changes and `test` them.
+
+The man pages are rendered from the `clap` command tree in `zb_cli/src/cli.rs`, so a new
+subcommand, option or help string documents itself — there is no checked-in roff to edit.
+`zb man` writes `zb.1` to stdout, `zb man --output-dir DIR` writes it and a page per
+subcommand.
 
 3. Write tests for new functionality. Each module should have accompanying tests.
 4. Commit your changes with clear, descriptive commit messages (see below)

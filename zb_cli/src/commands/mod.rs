@@ -6,6 +6,7 @@ pub mod info;
 pub mod init;
 pub mod install;
 pub mod list;
+pub mod man;
 pub mod migrate;
 pub mod outdated;
 pub mod reset;
