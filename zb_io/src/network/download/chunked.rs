@@ -1157,10 +1157,14 @@ mod tests {
     }
 
     /// Bottles live on ghcr.io, which answers every unauthenticated request with
-    /// a 401 and a token challenge. The size probe and the range probe therefore
-    /// have to survive that challenge, otherwise a large bottle silently falls
-    /// back to a single whole-file GET and the chunked path never runs in
-    /// production even though it passes every unauthenticated test.
+    /// a 401 and a token challenge. The size probe has to survive that challenge,
+    /// otherwise a large bottle silently falls back to a single whole-file GET
+    /// and the chunked path never runs in production even though it passes every
+    /// unauthenticated test. This test's shared token cache lets the size probe's
+    /// challenge warm the token before any range request goes out, so it does not
+    /// exercise the range-retry fix on its own — see
+    /// `auth::tests::range_request_keeps_its_range_across_a_token_challenge` for
+    /// that.
     #[tokio::test]
     async fn chunked_download_survives_registry_token_challenge() {
         let mock_server = MockServer::start().await;
@@ -1248,10 +1252,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}{blob_path_str}", mock_server.uri());
-        let result = downloader.download(&url, &actual_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, &actual_sha256, None, None)
+            .await;
 
         assert!(result.is_ok(), "download failed: {:?}", result.err());
         assert_eq!(std::fs::read(result.unwrap()).unwrap(), large_content);
