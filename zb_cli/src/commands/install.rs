@@ -264,3 +264,139 @@ fn ui_error(err: std::io::Error) -> zb_core::Error {
         message: format!("failed to write CLI output: {err}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+    use wiremock::MockServer;
+
+    use crate::commands::test_support::{
+        make_installer, mount_empty_formula_index, mount_formula,
+        mount_formula_with_failing_bottle, mount_missing_formula,
+    };
+    use crate::ui::StdUi;
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    /// `zb install a b c` plans the whole batch in one pass, so a dependency
+    /// two of them share is fetched and installed once.
+    #[tokio::test]
+    async fn installs_every_requested_formula_in_one_invocation() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_formula(&server, "multidep", "1.0.0", &[]).await;
+        mount_formula(&server, "multia", "1.0.0", &["multidep"]).await;
+        mount_formula(&server, "multib", "1.0.0", &["multidep"]).await;
+        mount_formula(&server, "multic", "1.0.0", &[]).await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        let mut ui = StdUi::new();
+
+        super::execute(
+            &mut installer,
+            names(&["multia", "multib", "multic"]),
+            false,
+            false,
+            &mut ui,
+        )
+        .await
+        .unwrap();
+
+        for name in ["multia", "multib", "multic", "multidep"] {
+            assert!(
+                installer.is_installed(name),
+                "{name} was requested in the batch but is not installed"
+            );
+            assert!(
+                prefix.join("bin").join(name).exists(),
+                "{name} was not linked into the prefix"
+            );
+        }
+        // The shared dependency is planned once, not once per dependent.
+        assert!(root.join("cellar/multidep/1.0.0").exists());
+    }
+
+    /// Planning is all-or-nothing: one unknown name in the batch and none of
+    /// its siblings are installed, because `plan_with_options` resolves every
+    /// requested formula before a single byte is downloaded.
+    #[tokio::test]
+    async fn an_unknown_formula_aborts_the_whole_batch_before_anything_installs() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_formula(&server, "realpkg", "1.0.0", &[]).await;
+        mount_missing_formula(&server, "ghostpkg").await;
+        mount_empty_formula_index(&server).await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        let mut ui = StdUi::new();
+
+        let err = super::execute(
+            &mut installer,
+            names(&["realpkg", "ghostpkg"]),
+            false,
+            false,
+            &mut ui,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(err, zb_core::Error::MissingFormula { ref name } if name == "ghostpkg"),
+            "expected the unknown formula to be named, got {err:?}"
+        );
+        assert!(
+            !installer.is_installed("realpkg"),
+            "a plan failure must not install part of the batch"
+        );
+    }
+
+    /// Once the batch is executing, failures stop being all-or-nothing: the
+    /// packages that downloaded cleanly stay installed and only the broken one
+    /// is rolled back.
+    ///
+    /// Two caveats this pins down rather than endorses, both worth their own
+    /// issue:
+    ///   * the command returns on the first `?` after `execute_formula_plan`,
+    ///     so the "Installed N packages" summary never prints and the user is
+    ///     never told which half of the batch succeeded;
+    ///   * `suggest_homebrew` is then printed for *every* requested formula,
+    ///     advising `brew install` even for the ones zbrew just installed.
+    #[tokio::test]
+    async fn keeps_the_rest_of_the_batch_when_one_download_fails() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_formula(&server, "okpkg1", "1.0.0", &[]).await;
+        mount_formula(&server, "okpkg2", "1.0.0", &[]).await;
+        mount_formula_with_failing_bottle(&server, "brokenpkg", "1.0.0").await;
+        mount_empty_formula_index(&server).await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        let mut ui = StdUi::new();
+
+        let result = super::execute(
+            &mut installer,
+            names(&["okpkg1", "brokenpkg", "okpkg2"]),
+            false,
+            false,
+            &mut ui,
+        )
+        .await;
+
+        assert!(result.is_err(), "a failed download must be reported");
+        assert!(installer.is_installed("okpkg1"));
+        assert!(installer.is_installed("okpkg2"));
+        assert!(!installer.is_installed("brokenpkg"));
+        assert!(!root.join("cellar/brokenpkg/1.0.0").exists());
+    }
+}

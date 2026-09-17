@@ -507,6 +507,149 @@ mod tests {
         assert!(env.root.join("cellar/goodpkg/1.0.0").exists());
     }
 
+    /// Mount `name` at 1.0.0 with the given dependencies. `bottle_status` of
+    /// 200 serves a real bottle; anything else fails the download.
+    async fn mount_batch_formula(
+        mock_server: &MockServer,
+        name: &str,
+        deps: &[&str],
+        bottle_status: u16,
+    ) {
+        let bottle = create_bottle_tarball(name);
+        let sha = sha256_hex(&bottle);
+        let tag = get_test_bottle_tag();
+        let deps_json = deps
+            .iter()
+            .map(|d| format!("\"{d}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        let formula_json = format!(
+            r#"{{"name":"{name}","versions":{{"stable":"1.0.0"}},"dependencies":[{deps_json}],"bottle":{{"stable":{{"files":{{"{tag}":{{"url":"{uri}/bottles/{name}-1.0.0.{tag}.bottle.tar.gz","sha256":"{sha}"}}}}}}}}}}"#,
+            uri = mock_server.uri()
+        );
+
+        Mock::given(method("GET"))
+            .and(path(format!("/formula/{name}.json")))
+            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json))
+            .mount(mock_server)
+            .await;
+
+        let bottle_response = if bottle_status == 200 {
+            ResponseTemplate::new(200).set_body_bytes(bottle)
+        } else {
+            ResponseTemplate::new(bottle_status).set_body_string("download failed")
+        };
+        Mock::given(method("GET"))
+            .and(path(format!("/bottles/{name}-1.0.0.{tag}.bottle.tar.gz")))
+            .respond_with(bottle_response)
+            .mount(mock_server)
+            .await;
+    }
+
+    /// Several roots in one `install` call resolve through a single plan, so a
+    /// dependency two of them share is installed once and the count covers the
+    /// whole closure.
+    #[tokio::test]
+    async fn install_registers_every_name_in_a_multi_formula_call() {
+        let mock_server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+
+        mount_batch_formula(&mock_server, "batchdep", &[], 200).await;
+        mount_batch_formula(&mock_server, "batchone", &["batchdep"], 200).await;
+        mount_batch_formula(&mock_server, "batchtwo", &["batchdep"], 200).await;
+        mount_batch_formula(&mock_server, "batchthree", &[], 200).await;
+
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+        fs::create_dir_all(root.join("db")).unwrap();
+
+        let api_client =
+            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
+        let mut installer = Installer::new(
+            api_client,
+            BlobCache::new(&root.join("cache")).unwrap(),
+            Store::new(&root).unwrap(),
+            Cellar::new(&root).unwrap(),
+            Linker::new(&prefix).unwrap(),
+            Database::open(&root.join("db/zb.sqlite3")).unwrap(),
+            prefix.clone(),
+            root.join("locks"),
+        );
+
+        let result = installer
+            .install(
+                &[
+                    "batchone".to_string(),
+                    "batchtwo".to_string(),
+                    "batchthree".to_string(),
+                ],
+                true,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.installed, 4,
+            "three roots plus the one dependency they share"
+        );
+        for name in ["batchone", "batchtwo", "batchthree", "batchdep"] {
+            assert!(installer.db.get_installed(name).is_some(), "{name} missing");
+            assert!(prefix.join("bin").join(name).exists(), "{name} not linked");
+        }
+    }
+
+    /// When more than one package in a batch fails, `execute_inner` overwrites
+    /// `error` each time, so only one failure ever reaches the caller — and
+    /// because bottles complete in download order, which one survives is not
+    /// deterministic. The successful count is discarded along with it.
+    ///
+    /// Asserted as-is to document today's behaviour; aggregating the failures
+    /// (and reporting what did install) would be a behaviour change.
+    #[tokio::test]
+    async fn only_one_error_survives_when_several_packages_fail() {
+        let mock_server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+
+        mount_batch_formula(&mock_server, "survivor", &[], 200).await;
+        mount_batch_formula(&mock_server, "casualtyone", &[], 500).await;
+        mount_batch_formula(&mock_server, "casualtytwo", &[], 500).await;
+
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+        fs::create_dir_all(root.join("db")).unwrap();
+
+        let api_client =
+            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
+        let mut installer = Installer::new(
+            api_client,
+            BlobCache::new(&root.join("cache")).unwrap(),
+            Store::new(&root).unwrap(),
+            Cellar::new(&root).unwrap(),
+            Linker::new(&prefix).unwrap(),
+            Database::open(&root.join("db/zb.sqlite3")).unwrap(),
+            prefix.clone(),
+            root.join("locks"),
+        );
+
+        let result = installer
+            .install(
+                &[
+                    "survivor".to_string(),
+                    "casualtyone".to_string(),
+                    "casualtytwo".to_string(),
+                ],
+                true,
+            )
+            .await;
+
+        // One error for two failures, and no way to learn that `survivor` is
+        // installed except by asking the database afterwards.
+        assert!(result.is_err());
+        assert!(installer.db.get_installed("survivor").is_some());
+        assert!(installer.db.get_installed("casualtyone").is_none());
+        assert!(installer.db.get_installed("casualtytwo").is_none());
+    }
+
     #[tokio::test]
     async fn db_persist_failure_cleans_materialized_and_linked_files() {
         let env = TestEnv::new().await;

@@ -74,3 +74,117 @@ fn ui_error(err: std::io::Error) -> zb_core::Error {
         message: format!("failed to write CLI output: {err}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+    use wiremock::MockServer;
+    use zb_io::Installer;
+
+    use crate::commands::test_support::{make_installer, mount_formula};
+    use crate::ui::StdUi;
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    async fn install_all(installer: &mut Installer, names: &[&str]) {
+        for name in names {
+            installer.install(&[name.to_string()], true).await.unwrap();
+            assert!(installer.is_installed(name));
+        }
+    }
+
+    /// `zb uninstall a b c` removes every name it was handed, kegs and prefix
+    /// links included.
+    #[tokio::test]
+    async fn uninstalls_every_requested_formula_in_one_invocation() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        for name in ["rma", "rmb", "rmc"] {
+            mount_formula(&server, name, "1.0.0", &[]).await;
+        }
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        install_all(&mut installer, &["rma", "rmb", "rmc"]).await;
+
+        let mut ui = StdUi::new();
+        super::execute(
+            &mut installer,
+            names(&["rma", "rmb", "rmc"]),
+            false,
+            &mut ui,
+        )
+        .unwrap();
+
+        for name in ["rma", "rmb", "rmc"] {
+            assert!(!installer.is_installed(name), "{name} is still installed");
+            assert!(!root.join(format!("cellar/{name}/1.0.0")).exists());
+            assert!(!prefix.join("bin").join(name).exists());
+        }
+    }
+
+    /// A name that is not installed does not abort the batch: the loop records
+    /// the error, keeps going, and the command exits non-zero afterwards
+    /// reporting the first failure.
+    #[tokio::test]
+    async fn uninstall_continues_past_a_formula_that_is_not_installed() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        for name in ["rmx", "rmz"] {
+            mount_formula(&server, name, "1.0.0", &[]).await;
+        }
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        install_all(&mut installer, &["rmx", "rmz"]).await;
+
+        let mut ui = StdUi::new();
+        let err = super::execute(
+            &mut installer,
+            names(&["rmx", "neverinstalled", "rmz"]),
+            false,
+            &mut ui,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, zb_core::Error::NotInstalled { ref name } if name == "neverinstalled"),
+            "expected the uninstalled formula to be named, got {err:?}"
+        );
+        assert!(!installer.is_installed("rmx"));
+        assert!(
+            !installer.is_installed("rmz"),
+            "a name after the failing one must still be uninstalled"
+        );
+    }
+
+    /// `--all` is the other way a single invocation covers many formulas: the
+    /// list comes from the database instead of the argv.
+    #[tokio::test]
+    async fn uninstall_all_removes_every_installed_formula() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        for name in ["alla", "allb"] {
+            mount_formula(&server, name, "1.0.0", &[]).await;
+        }
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        install_all(&mut installer, &["alla", "allb"]).await;
+
+        let mut ui = StdUi::new();
+        super::execute(&mut installer, Vec::new(), true, &mut ui).unwrap();
+
+        assert!(installer.list_installed().unwrap().is_empty());
+        assert!(!prefix.join("bin/alla").exists());
+        assert!(!prefix.join("bin/allb").exists());
+    }
+}

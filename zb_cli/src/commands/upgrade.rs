@@ -231,3 +231,156 @@ fn ui_error(err: std::io::Error) -> zb_core::Error {
         message: format!("failed to write CLI output: {err}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+    use wiremock::MockServer;
+    use zb_io::Installer;
+
+    use crate::commands::test_support::{
+        make_installer, mount_formula, mount_formula_up_to, mount_formula_with_failing_bottle,
+    };
+    use crate::ui::StdUi;
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    /// Serve `name` at 1.0.0 exactly once — long enough for the install below
+    /// to pick it up — then at 2.0.0 forever, so every later lookup reports it
+    /// outdated.
+    async fn mount_upgradable(server: &MockServer, name: &str) {
+        mount_formula_up_to(server, name, "1.0.0", &[], 1).await;
+        mount_formula(server, name, "2.0.0", &[]).await;
+    }
+
+    async fn install_at_1_0_0(installer: &mut Installer, names: &[&str]) {
+        for name in names {
+            installer.install(&[name.to_string()], true).await.unwrap();
+            assert_eq!(installer.get_installed(name).unwrap().version, "1.0.0");
+        }
+    }
+
+    /// `zb upgrade a b` walks the batch one package at a time; all of them
+    /// have to land on the new version.
+    #[tokio::test]
+    async fn upgrades_every_requested_formula_in_one_invocation() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_upgradable(&server, "upa").await;
+        mount_upgradable(&server, "upb").await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        install_at_1_0_0(&mut installer, &["upa", "upb"]).await;
+
+        let mut ui = StdUi::new();
+        super::execute(
+            &mut installer,
+            names(&["upa", "upb"]),
+            false,
+            false,
+            &mut ui,
+        )
+        .await
+        .unwrap();
+
+        for name in ["upa", "upb"] {
+            assert_eq!(
+                installer.get_installed(name).unwrap().version,
+                "2.0.0",
+                "{name} was not upgraded"
+            );
+            assert!(root.join(format!("cellar/{name}/2.0.0")).exists());
+            assert!(
+                !root.join(format!("cellar/{name}/1.0.0")).exists(),
+                "{name}'s old keg was left behind"
+            );
+        }
+    }
+
+    /// A name that was never installed is collected and reported at the end,
+    /// so the packages listed after it still get upgraded. The command then
+    /// exits non-zero naming the first one it could not find.
+    #[tokio::test]
+    async fn upgrade_reports_a_missing_formula_without_skipping_the_rest() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_upgradable(&server, "upc").await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        install_at_1_0_0(&mut installer, &["upc"]).await;
+
+        let mut ui = StdUi::new();
+        let err = super::execute(
+            &mut installer,
+            names(&["neverinstalled", "upc"]),
+            false,
+            false,
+            &mut ui,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(err, zb_core::Error::NotInstalled { ref name } if name == "neverinstalled"),
+            "expected the uninstalled formula to be named, got {err:?}"
+        );
+        assert_eq!(
+            installer.get_installed("upc").unwrap().version,
+            "2.0.0",
+            "a missing formula must not stop the rest of the batch"
+        );
+    }
+
+    /// An upgrade that fails mid-batch is recorded and the loop carries on.
+    /// The failed package keeps its old version (its bottles are prefetched
+    /// before the old keg is removed) and the command surfaces the first
+    /// error.
+    ///
+    /// Note: only the *first* error is returned, and `missing` is dropped
+    /// entirely when any upgrade also failed. Everything else is visible in
+    /// the printed output only.
+    #[tokio::test]
+    async fn upgrade_continues_after_a_failure_and_reports_the_first_one() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_formula_up_to(&server, "upfail", "1.0.0", &[], 1).await;
+        mount_formula_with_failing_bottle(&server, "upfail", "2.0.0").await;
+        mount_upgradable(&server, "upok").await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        install_at_1_0_0(&mut installer, &["upfail", "upok"]).await;
+
+        let mut ui = StdUi::new();
+        let result = super::execute(
+            &mut installer,
+            names(&["upfail", "upok"]),
+            false,
+            false,
+            &mut ui,
+        )
+        .await;
+
+        assert!(result.is_err(), "the failed upgrade must be reported");
+        assert_eq!(
+            installer.get_installed("upfail").unwrap().version,
+            "1.0.0",
+            "a failed upgrade must leave the old version installed"
+        );
+        assert_eq!(
+            installer.get_installed("upok").unwrap().version,
+            "2.0.0",
+            "a failure must not stop the rest of the batch"
+        );
+    }
+}
