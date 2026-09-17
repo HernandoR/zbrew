@@ -25,11 +25,11 @@ the [community discord](https://discord.gg/TVatsQBFJt); we would be more than ha
 
 ## Project Structure
 
-zbrew is organized as a Cargo workspace with three crates:
+zbrew is organized as a Cargo workspace with three crates, all under `crates/`:
 
-- `zb_core`: Core data models and domain logic (formula resolution, bottle selection)
-- `zb_io`: I/O operations (API client, downloads, extraction, installation)
-- `zb_cli`: Command-line interface
+- `crates/zb_core`: Core data models and domain logic (formula resolution, bottle selection)
+- `crates/zb_io`: I/O operations (API client, downloads, extraction, installation)
+- `crates/zb_cli`: Command-line interface
 
 Any changes you make that touch several crates should be organized properly. See [commit hygiene](#commit-hygiene)
 
@@ -79,7 +79,7 @@ This project includes a `Justfile`, Install [just](https://github.com/casey/just
 
 Before creating a PR make sure you `build` your changes and `test` them.
 
-The man pages are rendered from the `clap` command tree in `zb_cli/src/cli.rs`, so a new
+The man pages are rendered from the `clap` command tree in `crates/zb_cli/src/cli.rs`, so a new
 subcommand, option or help string documents itself — there is no checked-in roff to edit.
 `zb man` writes `zb.1` to stdout, `zb man --output-dir DIR` writes it and a page per
 subcommand.
