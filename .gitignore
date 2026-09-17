@@ -2,4 +2,6 @@
 **/*.rs.bk
 test_zb/
 /site/node_modules
-/site/_site
+/site/public
+/site/resources
+/site/.hugo_build.lock

@@ -1,0 +1,32 @@
+{{ $bench := site.Data.benchmarks }}
+<article class="bench-panel" id="benchmarks" aria-labelledby="bench-title-heading">
+  <div class="panel-copy">
+    <p class="panel-eyebrow">{{ site.Data.home.sections.benchmarks.eyebrow }}</p>
+  </div>
+
+  <div class="bench-card card-shadow">
+    <header class="bench-header">
+      <h2 class="bench-title" id="bench-title-heading">{{ $bench.title }}</h2>
+    </header>
+
+    <div class="bench-list">
+      {{ range $bench.items }}
+        <div class="bench-row" style="--bench-color: {{ .color | safeCSS }}">
+          <div class="bench-label">
+            <span class="bench-name">{{ .label }}</span>
+            {{ with .tag }}
+              <span class="bench-tag">{{ . }}</span>
+            {{ end }}
+          </div>
+          <div class="bench-bar">
+            <span class="bench-fill" style="width: {{ printf "%v%%" .width | safeCSS }};"></span>
+            {{ with .speedup }}
+              <span class="bench-speedup-text">{{ . }}</span>
+            {{ end }}
+          </div>
+          <div class="bench-time">{{ .time }}</div>
+        </div>
+      {{ end }}
+    </div>
+  </div>
+</article>

@@ -1,0 +1,19 @@
+{{ define "main" }}
+  <article class="prose-page">
+    <div class="site-shell">
+      <header class="prose-header">
+        <p class="prose-eyebrow">Docs</p>
+        <h1 class="prose-title">{{ .Title }}</h1>
+        {{ with .Description }}<p class="prose-lede">{{ . }}</p>{{ end }}
+      </header>
+
+      {{/* .TableOfContents already emits its own <nav>, so this wrapper is a div. */}}
+      <div class="prose-toc">
+        <p class="prose-toc-title">On this page</p>
+        {{ .TableOfContents }}
+      </div>
+
+      <div class="prose">{{ .Content }}</div>
+    </div>
+  </article>
+{{ end }}
