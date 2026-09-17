@@ -31,7 +31,7 @@ pub use extraction::patch::relocation::{
 };
 pub use installer::{
     DiagnosticReport, ExecuteResult, GcOutcome, HomebrewMigrationPackages, HomebrewPackage,
-    InstallPlan, Installer, OutdatedPackage, PlanFailure, RepairSummary, create_installer,
+    InstallPlan, Installer, OutdatedPackage, RepairSummary, create_installer,
     get_homebrew_packages,
 };
 pub use network::ApiClient;

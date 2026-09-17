@@ -5,7 +5,7 @@ pub mod formula;
 
 pub use build::{BuildPlan, BuildSystem, InstallMethod};
 pub use context::{ConcurrencyLimits, Context, LogLevel, LoggerHandle, Paths};
-pub use errors::{ConflictedLink, Error};
+pub use errors::{ConflictedLink, Error, PackageFailure, collapse_failures};
 pub use formula::{
     Formula, KegOnly, KegOnlyReason, SelectedBottle, compatible_codenames, formula_token,
     resolve_closure, select_bottle,

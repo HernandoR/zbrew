@@ -40,7 +40,7 @@ pub async fn execute(
         }
     }
 
-    let mut installed_count = 0usize;
+    let mut outcome = zb_io::ExecuteResult::default();
 
     if !normalized_names.is_empty() {
         let plan = match installer
@@ -49,6 +49,9 @@ pub async fn execute(
         {
             Ok(p) => p,
             Err(e) => {
+                // Planning is all-or-nothing and nothing has been installed
+                // yet, so every requested name is still a candidate for the
+                // Homebrew hint.
                 let handled_missing = suggest_missing_formula_matches(installer, &e).await;
 
                 if !handled_missing {
@@ -60,7 +63,9 @@ pub async fn execute(
             }
         };
 
-        installed_count += execute_formula_plan(installer, &formulas, plan, no_link, ui).await?;
+        // Not `?`: a formula that failed must not cancel the casks the user
+        // asked for in the same invocation. They are independent packages.
+        outcome.absorb(execute_formula_plan(installer, plan, no_link, ui).await?);
     }
 
     if !cask_names.is_empty() {
@@ -69,29 +74,64 @@ pub async fn execute(
             cask_names.len()
         ))
         .map_err(ui_error)?;
-        let result = installer.install_casks(&cask_names, !no_link).await?;
-        installed_count += result.installed;
+        outcome.absorb(installer.install_casks(&cask_names, !no_link).await?);
     }
 
     let elapsed = start.elapsed();
+    report_outcome(&outcome, elapsed, ui)?;
+
+    match outcome.to_error() {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Print an honest account of the batch: what installed, and what did not
+/// along with why. Both halves are printed even when the command is about to
+/// exit non-zero.
+fn report_outcome(
+    outcome: &zb_io::ExecuteResult,
+    elapsed: std::time::Duration,
+    ui: &mut StdUi,
+) -> Result<(), zb_core::Error> {
     ui.blank_line().map_err(ui_error)?;
     ui.heading(format!(
         "Installed {} packages in {:.2}s",
-        style(installed_count).green().bold(),
+        style(outcome.installed_count()).green().bold(),
         elapsed.as_secs_f64()
     ))
     .map_err(ui_error)?;
 
+    if !outcome.installed.is_empty() {
+        ui.bullet(format!(
+            "installed: {}",
+            style(outcome.installed.join(", ")).green()
+        ))
+        .map_err(ui_error)?;
+    }
+
+    for failure in &outcome.failed {
+        ui.error(format!(
+            "failed: {} ({})",
+            style(&failure.name).bold(),
+            failure.error
+        ))
+        .map_err(ui_error)?;
+    }
+
     Ok(())
 }
 
+/// Execute an already-resolved plan and explain every package that failed.
+///
+/// `Err` only means the batch could not start. Per-package outcomes come back
+/// in the returned `ExecuteResult`, so the caller still learns what installed.
 pub async fn execute_formula_plan(
     installer: &mut zb_io::Installer,
-    requested_formulas: &[String],
     plan: zb_io::InstallPlan,
     no_link: bool,
     ui: &mut StdUi,
-) -> Result<usize, zb_core::Error> {
+) -> Result<zb_io::ExecuteResult, zb_core::Error> {
     ui.heading(format!(
         "Resolving dependencies ({} packages)...",
         plan.items.len()
@@ -206,9 +246,9 @@ pub async fn execute_formula_plan(
         }
     }));
 
-    let result_val = installer
+    let outcome = installer
         .execute_with_progress(plan, !no_link, Some(progress_callback))
-        .await;
+        .await?;
 
     {
         let bars = bars.lock().unwrap();
@@ -219,44 +259,54 @@ pub async fn execute_formula_plan(
         }
     }
 
-    match result_val {
-        Ok(result) => Ok(result.installed),
-        Err(ref e @ zb_core::Error::LinkConflict { ref conflicts }) => {
-            ui.blank_line().map_err(ui_error)?;
-            ui.error("The link step did not complete successfully.")
-                .map_err(ui_error)?;
-            ui.println("The formula was installed, but is not symlinked into the prefix.")
-                .map_err(ui_error)?;
-            ui.blank_line().map_err(ui_error)?;
-            ui.println("Possible conflicting files:")
-                .map_err(ui_error)?;
-            for c in conflicts {
-                if let Some(ref owner) = c.owned_by {
-                    ui.println(format!(
-                        "  {} (symlink belonging to {})",
-                        c.path.display(),
-                        style(owner).yellow()
-                    ))
-                    .map_err(ui_error)?;
-                } else {
-                    ui.println(format!("  {}", c.path.display()))
-                        .map_err(ui_error)?;
+    // Advice is given per failed package. A package that installed in this
+    // same batch is never told to go and use Homebrew instead.
+    for failure in &outcome.failed {
+        match failure.error {
+            zb_core::Error::LinkConflict { ref conflicts } => {
+                explain_link_conflict(&failure.name, conflicts, ui)?;
+            }
+            ref error => {
+                if !suggest_missing_formula_matches(installer, error).await {
+                    suggest_homebrew(&failure.name, error);
                 }
             }
-            ui.blank_line().map_err(ui_error)?;
-            Err(e.clone())
-        }
-        Err(e) => {
-            let handled_missing = suggest_missing_formula_matches(installer, &e).await;
-
-            if !handled_missing {
-                for formula in requested_formulas {
-                    suggest_homebrew(formula, &e);
-                }
-            }
-            Err(e)
         }
     }
+
+    Ok(outcome)
+}
+
+fn explain_link_conflict(
+    name: &str,
+    conflicts: &[zb_core::ConflictedLink],
+    ui: &mut StdUi,
+) -> Result<(), zb_core::Error> {
+    ui.blank_line().map_err(ui_error)?;
+    ui.error(format!(
+        "The link step for {} did not complete successfully.",
+        style(name).bold()
+    ))
+    .map_err(ui_error)?;
+    ui.println("The formula was installed, but is not symlinked into the prefix.")
+        .map_err(ui_error)?;
+    ui.blank_line().map_err(ui_error)?;
+    ui.println("Possible conflicting files:")
+        .map_err(ui_error)?;
+    for c in conflicts {
+        if let Some(ref owner) = c.owned_by {
+            ui.println(format!(
+                "  {} (symlink belonging to {})",
+                c.path.display(),
+                style(owner).yellow()
+            ))
+            .map_err(ui_error)?;
+        } else {
+            ui.println(format!("  {}", c.path.display()))
+                .map_err(ui_error)?;
+        }
+    }
+    ui.blank_line().map_err(ui_error)
 }
 
 fn ui_error(err: std::io::Error) -> zb_core::Error {
@@ -321,9 +371,10 @@ mod tests {
         assert!(root.join("cellar/multidep/1.0.0").exists());
     }
 
-    /// Planning is all-or-nothing: one unknown name in the batch and none of
-    /// its siblings are installed, because `plan_with_options` resolves every
-    /// requested formula before a single byte is downloaded.
+    /// Planning stays all-or-nothing by design: `plan_with_options` resolves
+    /// every requested formula before a single byte is downloaded, so one
+    /// unknown name means nothing is installed and the error names it exactly.
+    /// Nothing was attempted, so there is no batch outcome to report.
     #[tokio::test]
     async fn an_unknown_formula_aborts_the_whole_batch_before_anything_installs() {
         let server = MockServer::start().await;
@@ -362,13 +413,9 @@ mod tests {
     /// packages that downloaded cleanly stay installed and only the broken one
     /// is rolled back.
     ///
-    /// Two caveats this pins down rather than endorses, both worth their own
-    /// issue:
-    ///   * the command returns on the first `?` after `execute_formula_plan`,
-    ///     so the "Installed N packages" summary never prints and the user is
-    ///     never told which half of the batch succeeded;
-    ///   * `suggest_homebrew` is then printed for *every* requested formula,
-    ///     advising `brew install` even for the ones zbrew just installed.
+    /// The error that comes back names the broken package and nothing else, so
+    /// the packages that installed are neither reported as failures nor
+    /// advised to be installed with Homebrew instead (issue #102).
     #[tokio::test]
     async fn keeps_the_rest_of_the_batch_when_one_download_fails() {
         let server = MockServer::start().await;
@@ -393,10 +440,62 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err(), "a failed download must be reported");
+        let err = result.expect_err("a failed download must be reported");
+        assert!(
+            matches!(err, zb_core::Error::NetworkFailure { .. }),
+            "expected only brokenpkg's download error, got {err:?}"
+        );
+        let rendered = err.to_string();
+        for name in ["okpkg1", "okpkg2"] {
+            assert!(
+                !rendered.contains(name),
+                "{name} installed cleanly but is named in the failure: {rendered}"
+            );
+        }
+
         assert!(installer.is_installed("okpkg1"));
         assert!(installer.is_installed("okpkg2"));
         assert!(!installer.is_installed("brokenpkg"));
         assert!(!root.join("cellar/brokenpkg/1.0.0").exists());
+    }
+
+    /// Every failure in the batch reaches the user, named, rather than one
+    /// arbitrary survivor — and the package that installed is still installed
+    /// (issue #102).
+    #[tokio::test]
+    async fn reports_every_failure_in_the_batch_by_name() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_formula(&server, "livepkg", "1.0.0", &[]).await;
+        mount_formula_with_failing_bottle(&server, "deadpkg1", "1.0.0").await;
+        mount_formula_with_failing_bottle(&server, "deadpkg2", "1.0.0").await;
+        mount_empty_formula_index(&server).await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        let mut ui = StdUi::new();
+
+        let err = super::execute(
+            &mut installer,
+            names(&["livepkg", "deadpkg1", "deadpkg2"]),
+            false,
+            false,
+            &mut ui,
+        )
+        .await
+        .unwrap_err();
+
+        let zb_core::Error::BatchFailure { failures } = err else {
+            panic!("expected both failures to be reported, got {err:?}");
+        };
+        let mut failed: Vec<&str> = failures.iter().map(|f| f.name.as_str()).collect();
+        failed.sort();
+        assert_eq!(failed, ["deadpkg1", "deadpkg2"]);
+
+        assert!(installer.is_installed("livepkg"));
+        assert!(!installer.is_installed("deadpkg1"));
+        assert!(!installer.is_installed("deadpkg2"));
     }
 }

@@ -33,9 +33,6 @@ const MAX_CHUNK_RETRIES: u32 = 3;
 #[derive(Debug, Clone)]
 pub(crate) struct DownloadResult {
     pub blob_path: PathBuf,
-    /// Position of the originating request in the batch handed to
-    /// `download_streaming`, so the caller can pair a result with its item.
-    pub index: usize,
 }
 
 pub(crate) use parallel::{DownloadRequest, ParallelDownloader};

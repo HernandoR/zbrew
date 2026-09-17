@@ -56,8 +56,8 @@ pub async fn execute(
             }
         }
         if outdated.is_empty() {
-            if let Some(name) = missing.into_iter().next() {
-                return Err(zb_core::Error::NotInstalled { name });
+            if let Some(e) = zb_core::collapse_failures(not_installed_failures(missing)) {
+                return Err(e);
             }
             ui.info("All specified packages are up to date.".to_string())
                 .map_err(ui_error)?;
@@ -165,8 +165,11 @@ pub async fn execute(
         }
     }));
 
-    let mut upgraded = 0usize;
-    let mut errors: Vec<(String, zb_core::Error)> = Vec::new();
+    let mut upgraded: Vec<String> = Vec::new();
+    // Names that were never installed come first: they were detected before
+    // the first upgrade ran, and they must be reported alongside the upgrade
+    // failures rather than dropped whenever an upgrade also failed.
+    let mut failures = not_installed_failures(missing);
 
     for pkg in &outdated {
         let name = &pkg.name;
@@ -183,11 +186,11 @@ pub async fn execute(
         {
             Ok(()) => {
                 ui.step_ok().map_err(ui_error)?;
-                upgraded += 1;
+                upgraded.push(name.clone());
             }
             Err(e) => {
                 ui.step_fail().map_err(ui_error)?;
-                errors.push((name.clone(), e));
+                failures.push(zb_core::PackageFailure::new(name.clone(), e));
             }
         }
     }
@@ -204,26 +207,43 @@ pub async fn execute(
     let elapsed = start.elapsed();
     ui.blank_line().map_err(ui_error)?;
 
-    for (name, err) in &errors {
-        ui.error(format!("Failed to upgrade {}: {}", style(name).bold(), err))
+    ui.heading(format!(
+        "Upgraded {} packages in {:.2}s",
+        style(upgraded.len()).green().bold(),
+        elapsed.as_secs_f64()
+    ))
+    .map_err(ui_error)?;
+
+    if !upgraded.is_empty() {
+        ui.bullet(format!("upgraded: {}", style(upgraded.join(", ")).green()))
             .map_err(ui_error)?;
     }
 
-    if errors.is_empty() && missing.is_empty() {
-        ui.heading(format!(
-            "Upgraded {} packages in {:.2}s",
-            style(upgraded).green().bold(),
-            elapsed.as_secs_f64()
+    for failure in &failures {
+        ui.error(format!(
+            "Failed to upgrade {}: {}",
+            style(&failure.name).bold(),
+            failure.error
         ))
         .map_err(ui_error)?;
-        Ok(())
-    } else if !errors.is_empty() {
-        Err(errors.remove(0).1)
-    } else {
-        Err(zb_core::Error::NotInstalled {
-            name: missing.remove(0),
-        })
     }
+
+    match zb_core::collapse_failures(failures) {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Turn names that were never installed into failures, so they travel with the
+/// upgrade failures instead of being reported only in passing.
+fn not_installed_failures(names: Vec<String>) -> Vec<zb_core::PackageFailure> {
+    names
+        .into_iter()
+        .map(|name| {
+            let error = zb_core::Error::NotInstalled { name: name.clone() };
+            zb_core::PackageFailure::new(name, error)
+        })
+        .collect()
 }
 
 fn ui_error(err: std::io::Error) -> zb_core::Error {
@@ -302,9 +322,9 @@ mod tests {
         }
     }
 
-    /// A name that was never installed is collected and reported at the end,
-    /// so the packages listed after it still get upgraded. The command then
-    /// exits non-zero naming the first one it could not find.
+    /// Names that were never installed are collected and reported at the end,
+    /// so the packages listed after them still get upgraded. The command then
+    /// exits non-zero naming *every* one it could not find, not just the first.
     #[tokio::test]
     async fn upgrade_reports_a_missing_formula_without_skipping_the_rest() {
         let server = MockServer::start().await;
@@ -320,7 +340,46 @@ mod tests {
         let mut ui = StdUi::new();
         let err = super::execute(
             &mut installer,
-            names(&["neverinstalled", "upc"]),
+            names(&["neverinstalled", "upc", "alsonotinstalled"]),
+            false,
+            false,
+            &mut ui,
+        )
+        .await
+        .unwrap_err();
+
+        let zb_core::Error::BatchFailure { failures } = err else {
+            panic!("expected both uninstalled formulas to be named, got {err:?}");
+        };
+        let mut missing: Vec<&str> = failures.iter().map(|f| f.name.as_str()).collect();
+        missing.sort();
+        assert_eq!(missing, ["alsonotinstalled", "neverinstalled"]);
+
+        assert_eq!(
+            installer.get_installed("upc").unwrap().version,
+            "2.0.0",
+            "a missing formula must not stop the rest of the batch"
+        );
+    }
+
+    /// A single missing name keeps its precise error variant, so callers that
+    /// match on `NotInstalled` are not forced through a one-element batch.
+    #[tokio::test]
+    async fn a_lone_missing_formula_is_reported_as_not_installed() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_upgradable(&server, "upd").await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        install_at_1_0_0(&mut installer, &["upd"]).await;
+
+        let mut ui = StdUi::new();
+        let err = super::execute(
+            &mut installer,
+            names(&["neverinstalled", "upd"]),
             false,
             false,
             &mut ui,
@@ -332,23 +391,18 @@ mod tests {
             matches!(err, zb_core::Error::NotInstalled { ref name } if name == "neverinstalled"),
             "expected the uninstalled formula to be named, got {err:?}"
         );
-        assert_eq!(
-            installer.get_installed("upc").unwrap().version,
-            "2.0.0",
-            "a missing formula must not stop the rest of the batch"
-        );
+        assert_eq!(installer.get_installed("upd").unwrap().version, "2.0.0");
     }
 
     /// An upgrade that fails mid-batch is recorded and the loop carries on.
     /// The failed package keeps its old version (its bottles are prefetched
-    /// before the old keg is removed) and the command surfaces the first
-    /// error.
+    /// before the old keg is removed).
     ///
-    /// Note: only the *first* error is returned, and `missing` is dropped
-    /// entirely when any upgrade also failed. Everything else is visible in
-    /// the printed output only.
+    /// A name that was never installed and an upgrade that failed are reported
+    /// *together*: neither half is dropped because the other is non-empty
+    /// (issue #102).
     #[tokio::test]
-    async fn upgrade_continues_after_a_failure_and_reports_the_first_one() {
+    async fn upgrade_reports_failed_and_missing_packages_together() {
         let server = MockServer::start().await;
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("zbrew");
@@ -362,16 +416,28 @@ mod tests {
         install_at_1_0_0(&mut installer, &["upfail", "upok"]).await;
 
         let mut ui = StdUi::new();
-        let result = super::execute(
+        let err = super::execute(
             &mut installer,
-            names(&["upfail", "upok"]),
+            names(&["upfail", "upnotinstalled", "upok"]),
             false,
             false,
             &mut ui,
         )
-        .await;
+        .await
+        .unwrap_err();
 
-        assert!(result.is_err(), "the failed upgrade must be reported");
+        let zb_core::Error::BatchFailure { failures } = err else {
+            panic!("expected the failed and the missing package together, got {err:?}");
+        };
+        let mut failed: Vec<&str> = failures.iter().map(|f| f.name.as_str()).collect();
+        failed.sort();
+        assert_eq!(failed, ["upfail", "upnotinstalled"]);
+        assert!(
+            failures.iter().any(|f| f.name == "upnotinstalled"
+                && matches!(f.error, zb_core::Error::NotInstalled { .. })),
+            "the missing name must keep its own reason: {failures:?}"
+        );
+
         assert_eq!(
             installer.get_installed("upfail").unwrap().version,
             "1.0.0",

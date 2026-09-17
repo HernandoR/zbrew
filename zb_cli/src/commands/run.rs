@@ -29,7 +29,10 @@ pub async fn prepare_execution(
         // the command where we could uninstall. Marking the keg instead keeps
         // it out of `zb list` and lets `zb gc` reclaim it. See issue #36.
         let plan = installer.plan(std::slice::from_ref(&normalized)).await?;
-        installer.execute(plan.transient(), false).await?;
+        let outcome = installer.execute(plan.transient(), false).await?;
+        if let Some(e) = outcome.to_error() {
+            return Err(e);
+        }
     }
 
     let installed =

@@ -34,38 +34,51 @@ pub fn execute(
     ))
     .map_err(ui_error)?;
 
-    let mut errors: Vec<(String, zb_core::Error)> = Vec::new();
+    let mut removed: Vec<String> = Vec::new();
+    let mut failures: Vec<zb_core::PackageFailure> = Vec::new();
 
     if formulas.len() > 1 {
         for name in &formulas {
             ui.step_start(name).map_err(ui_error)?;
             match installer.uninstall(name) {
-                Ok(()) => ui.step_ok().map_err(ui_error)?,
+                Ok(()) => {
+                    ui.step_ok().map_err(ui_error)?;
+                    removed.push(name.clone());
+                }
                 Err(e) => {
                     ui.step_fail().map_err(ui_error)?;
-                    errors.push((name.clone(), e));
+                    failures.push(zb_core::PackageFailure::new(name.clone(), e));
                 }
             }
         }
-    } else if let Some(name) = formulas.first()
-        && let Err(e) = installer.uninstall(name)
-    {
-        errors.push((name.clone(), e));
+    } else if let Some(name) = formulas.first() {
+        match installer.uninstall(name) {
+            Ok(()) => removed.push(name.clone()),
+            Err(e) => failures.push(zb_core::PackageFailure::new(name.clone(), e)),
+        }
     }
 
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        for (name, err) in &errors {
-            ui.error(format!(
-                "Failed to uninstall {}: {}",
-                style(name).bold(),
-                err
-            ))
-            .map_err(ui_error)?;
-        }
-        // Return just the first error up. TODO: don't return errors from this fn?
-        Err(errors.remove(0).1)
+    if !failures.is_empty() && !removed.is_empty() {
+        ui.bullet(format!(
+            "uninstalled: {}",
+            style(removed.join(", ")).green()
+        ))
+        .map_err(ui_error)?;
+    }
+
+    for failure in &failures {
+        ui.error(format!(
+            "Failed to uninstall {}: {}",
+            style(&failure.name).bold(),
+            failure.error
+        ))
+        .map_err(ui_error)?;
+    }
+
+    // Every failure travels up, not just the first one.
+    match zb_core::collapse_failures(failures) {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
 }
 
@@ -128,8 +141,8 @@ mod tests {
     }
 
     /// A name that is not installed does not abort the batch: the loop records
-    /// the error, keeps going, and the command exits non-zero afterwards
-    /// reporting the first failure.
+    /// the error, keeps going, and the command exits non-zero afterwards. One
+    /// failure keeps its own error variant.
     #[tokio::test]
     async fn uninstall_continues_past_a_formula_that_is_not_installed() {
         let server = MockServer::start().await;
@@ -161,6 +174,42 @@ mod tests {
         assert!(
             !installer.is_installed("rmz"),
             "a name after the failing one must still be uninstalled"
+        );
+    }
+
+    /// Several names that are not installed are all reported, not just the
+    /// first one the loop tripped over (issue #102).
+    #[tokio::test]
+    async fn uninstall_reports_every_name_it_could_not_remove() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_formula(&server, "rmkeep", "1.0.0", &[]).await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        install_all(&mut installer, &["rmkeep"]).await;
+
+        let mut ui = StdUi::new();
+        let err = super::execute(
+            &mut installer,
+            names(&["ghostone", "rmkeep", "ghosttwo"]),
+            false,
+            &mut ui,
+        )
+        .unwrap_err();
+
+        let zb_core::Error::BatchFailure { failures } = err else {
+            panic!("expected both missing names to be reported, got {err:?}");
+        };
+        let mut failed: Vec<&str> = failures.iter().map(|f| f.name.as_str()).collect();
+        failed.sort();
+        assert_eq!(failed, ["ghostone", "ghosttwo"]);
+
+        assert!(
+            !installer.is_installed("rmkeep"),
+            "the name that was installed must still be removed"
         );
     }
 

@@ -52,10 +52,14 @@ impl Installer {
 
         self.uninstall_by_version(name, &old.version)?;
 
-        // We already hold the lock, so call the no-lock variant.
-        self.execute_inner(plan, link, progress).await?;
-
-        Ok(())
+        // We already hold the lock, so call the no-lock variant. An upgrade is
+        // one package plus its dependencies, so any per-package failure in the
+        // batch fails the upgrade — but every one of them is reported.
+        let outcome = self.execute_inner(plan, link, progress).await?;
+        match outcome.to_error() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Pre-download bottle artifacts in `plan` into the blob cache. No-op
@@ -91,7 +95,7 @@ impl Installer {
         let mut rx = self
             .downloader
             .download_streaming(requests, download_progress);
-        while let Some(result) = rx.recv().await {
+        while let Some((_, result)) = rx.recv().await {
             result?;
         }
         Ok(())
