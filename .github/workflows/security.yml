@@ -1,0 +1,186 @@
+name: security
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'site/package.json'
+      - 'site/pnpm-lock.yaml'
+      - '.github/workflows/security.yml'
+  pull_request:
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'site/package.json'
+      - 'site/pnpm-lock.yaml'
+      - '.github/workflows/security.yml'
+  # A vulnerability database grows without the lockfile changing, so a scan
+  # that only runs on pushes goes stale the moment the code stops moving.
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    name: semgrep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Only for the SARIF upload below: nothing else in this job writes.
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # `semgrep ci` is the command the Semgrep docs lead with, but it wants a
+      # SEMGREP_APP_TOKEN and this repository has no Semgrep AppSec Platform
+      # account, so `semgrep scan` with named registry rulesets is what runs
+      # here. For the same reason the rulesets are `p/rust` and `p/secrets`,
+      # both free, rather than `pro:recommended` (paid) or `auto` (resolves
+      # rules by uploading the project identity, and picks up whatever the
+      # registry decides a "Rust repository" needs on any given day).
+      #
+      # pipx, not pip: the runner image is Ubuntu 24.04, where the system Python
+      # is PEP 668 externally-managed and `pip install` fails outright. The
+      # official semgrep image would be the other way in, but it is Alpine, and
+      # running actions/checkout inside it rests on the runner's musl node.
+      #
+      # `semgrep scan` exits 0 when it finds something unless `--error` is
+      # passed, which is what is wanted here: the finding belongs in the
+      # Security tab, not in a red check on a pull request that did not cause it.
+      #
+      # The severity floor is not decoration. p/rust's note-level rules report
+      # 27 findings on the tree as it stands, and every one of them is
+      # `unsafe { env::set_var(..) }` in a test or a command line tool reading
+      # its own argv. At WARNING and above the same ruleset reports nothing, and
+      # what it still watches for is worth an alert in a package manager that
+      # fetches bottles over TLS: disabled certificate verification, dangerous
+      # rustls configuration, insecure hashes, bidirectional unicode.
+      - name: run semgrep
+        run: |
+          pipx run --spec 'semgrep~=1.177' semgrep scan \
+            --config p/rust \
+            --config p/secrets \
+            --severity WARNING \
+            --severity ERROR \
+            --metrics off \
+            --sarif --output semgrep.sarif \
+            .
+
+      - name: summarise semgrep findings
+        run: |
+          set -euo pipefail
+
+          count=$(jq '[.runs[].results[]] | length' semgrep.sarif)
+          {
+            echo '### semgrep'
+            echo
+            if [ "$count" -eq 0 ]; then
+              echo 'No findings.'
+            else
+              echo "$count finding(s):"
+              echo
+              echo '```'
+              jq -r '
+                .runs[].results[]
+                | "\(.locations[0].physicalLocation.artifactLocation.uri // "?")"
+                  + ":\(.locations[0].physicalLocation.region.startLine // 0)"
+                  + "  \(.ruleId // "?")"
+              ' semgrep.sarif
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A pull request opened from a fork runs with a read-only token, so the
+      # code scanning API rejects the upload and the step fails for a reason the
+      # contributor cannot fix. Skip it there — the summary above still reports
+      # what the scan found — and upload on push, schedule, and same-repo pull
+      # requests, which is where the Security tab is actually maintained.
+      #
+      # The test compares repository names rather than reading
+      # `head.repo.fork`, which is true of every pull request here: zbrew is
+      # itself a fork of lucasgelfond/zerobrew, so that flag says nothing about
+      # where the branch came from.
+      - name: upload semgrep results
+        if: >-
+          github.event_name != 'pull_request'
+          || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  trivy:
+    name: trivy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # `cargo audit` in the lint workflow already gates the Rust dependencies
+      # against RustSec. Trivy is not a second gate on the same ground: it reads
+      # the GitHub advisory data as well, and it is the only thing that looks at
+      # site/pnpm-lock.yaml. Hence vulnerabilities only — the secret and
+      # misconfiguration scanners are a different job with a different signal to
+      # noise ratio — capped at HIGH and CRITICAL, and unfixed advisories
+      # dropped, because an advisory with no released fix is not work anyone can
+      # pick up from an alert.
+      #
+      # `severity` alone does not filter SARIF output; `limit-severities-for-sarif`
+      # is what makes the uploaded file honour it.
+      - name: scan dependencies
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-results.sarif
+          # Report, do not gate: see the note above.
+          exit-code: '0'
+
+      - name: summarise trivy findings
+        run: |
+          set -euo pipefail
+
+          count=$(jq '[.runs[].results[]] | length' trivy-results.sarif)
+          {
+            echo '### trivy'
+            echo
+            if [ "$count" -eq 0 ]; then
+              echo 'No HIGH or CRITICAL advisories with a fix available.'
+            else
+              echo "$count finding(s):"
+              echo
+              echo '```'
+              jq -r '
+                .runs[].results[]
+                | "\(.locations[0].physicalLocation.artifactLocation.uri // "?")"
+                  + "  \(.ruleId // "?")"
+                  + "  \((.message.text // "") | split("\n")[0])"
+              ' trivy-results.sarif
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Skipped for pull requests from forks, for the reason given in the
+      # semgrep job.
+      - name: upload trivy results
+        if: >-
+          github.event_name != 'pull_request'
+          || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
