@@ -20,11 +20,11 @@ use crate::storage::db::Database;
 use crate::storage::store::Store;
 use crate::{Installer, Linker};
 
-pub fn create_bottle_tarball(formula_name: &str) -> Vec<u8> {
+pub(crate) fn create_bottle_tarball(formula_name: &str) -> Vec<u8> {
     create_bottle_tarball_with_version(formula_name, "1.0.0")
 }
 
-pub fn create_bottle_tarball_with_version(formula_name: &str, version: &str) -> Vec<u8> {
+pub(crate) fn create_bottle_tarball_with_version(formula_name: &str, version: &str) -> Vec<u8> {
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use std::io::Write;
@@ -51,7 +51,7 @@ pub fn create_bottle_tarball_with_version(formula_name: &str, version: &str) -> 
     encoder.finish().unwrap()
 }
 
-pub fn create_bottle_tarball_with_entries(
+pub(crate) fn create_bottle_tarball_with_entries(
     formula_name: &str,
     version: &str,
     entries: &[&str],
@@ -81,14 +81,14 @@ pub fn create_bottle_tarball_with_entries(
     encoder.finish().unwrap()
 }
 
-pub fn sha256_hex(data: &[u8]) -> String {
+pub(crate) fn sha256_hex(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     crate::checksum::sha256_hex(hasher)
 }
 
-pub fn get_test_bottle_tag() -> &'static str {
+pub(crate) fn get_test_bottle_tag() -> &'static str {
     if cfg!(target_os = "linux") {
         "x86_64_linux"
     } else if cfg!(target_arch = "x86_64") {
@@ -100,7 +100,7 @@ pub fn get_test_bottle_tag() -> &'static str {
 
 /// The URL path a bottle of `name`-`version` is served from, for the tag the
 /// host running the tests resolves to.
-pub fn bottle_path(name: &str, version: &str) -> String {
+pub(crate) fn bottle_path(name: &str, version: &str) -> String {
     format!(
         "/bottles/{name}-{version}.{tag}.bottle.tar.gz",
         tag = get_test_bottle_tag()
@@ -108,12 +108,12 @@ pub fn bottle_path(name: &str, version: &str) -> String {
 }
 
 /// Formula JSON for a bottled formula with no dependencies.
-pub fn formula_json(name: &str, version: &str, bottle_url: &str, sha256: &str) -> String {
+pub(crate) fn formula_json(name: &str, version: &str, bottle_url: &str, sha256: &str) -> String {
     formula_json_with_deps(name, version, bottle_url, sha256, &[])
 }
 
 /// Formula JSON for a bottled formula that depends on `deps`.
-pub fn formula_json_with_deps(
+pub(crate) fn formula_json_with_deps(
     name: &str,
     version: &str,
     bottle_url: &str,
@@ -146,7 +146,7 @@ pub fn formula_json_with_deps(
 }
 
 /// The Ruby source of a tap formula whose bottle lives under `root_url`.
-pub fn tap_formula_rb(
+pub(crate) fn tap_formula_rb(
     class_name: &str,
     version: &str,
     root_url: &str,
@@ -173,7 +173,7 @@ end
 
 /// A mock Homebrew API plus the temporary root and prefix an `Installer`
 /// built by [`TestEnv::installer`] operates on.
-pub struct TestEnv {
+pub(crate) struct TestEnv {
     pub server: MockServer,
     pub root: PathBuf,
     pub prefix: PathBuf,
@@ -182,7 +182,7 @@ pub struct TestEnv {
 }
 
 impl TestEnv {
-    pub async fn new() -> Self {
+    pub(crate) async fn new() -> Self {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("zbrew");
         let prefix = tmp.path().join("homebrew");
@@ -195,32 +195,32 @@ impl TestEnv {
         }
     }
 
-    pub fn uri(&self) -> String {
+    pub(crate) fn uri(&self) -> String {
         self.server.uri()
     }
 
     /// The temporary directory holding [`Self::root`] and [`Self::prefix`],
     /// for fixtures that must live outside both.
-    pub fn tmp_path(&self) -> &Path {
+    pub(crate) fn tmp_path(&self) -> &Path {
         self._tmp.path()
     }
 
-    pub fn db_path(&self) -> PathBuf {
+    pub(crate) fn db_path(&self) -> PathBuf {
         self.root.join("db/zb.sqlite3")
     }
 
     /// The URL the mock server serves a bottle of `name`-`version` from.
-    pub fn bottle_url(&self, name: &str, version: &str) -> String {
+    pub(crate) fn bottle_url(&self, name: &str, version: &str) -> String {
         format!("{}{}", self.uri(), bottle_path(name, version))
     }
 
     /// An installer reading formulae from the mock server's core API.
-    pub fn installer(&self) -> Installer {
+    pub(crate) fn installer(&self) -> Installer {
         self.installer_with(ApiClient::with_base_url(format!("{}/formula", self.uri())).unwrap())
     }
 
     /// An installer that also resolves tap formulae from the mock server.
-    pub fn installer_with_taps(&self) -> Installer {
+    pub(crate) fn installer_with_taps(&self) -> Installer {
         self.installer_with(
             ApiClient::with_base_url(format!("{}/formula", self.uri()))
                 .unwrap()
@@ -228,7 +228,7 @@ impl TestEnv {
         )
     }
 
-    pub fn installer_with(&self, api_client: ApiClient) -> Installer {
+    pub(crate) fn installer_with(&self, api_client: ApiClient) -> Installer {
         Installer::new(
             api_client,
             BlobCache::new(&self.root.join("cache")).unwrap(),
@@ -242,7 +242,7 @@ impl TestEnv {
     }
 
     /// Answer `GET /formula/<name>.json` with `body`.
-    pub async fn mount_formula(&self, name: &str, body: impl Into<String>) {
+    pub(crate) async fn mount_formula(&self, name: &str, body: impl Into<String>) {
         Mock::given(method("GET"))
             .and(path(format!("/formula/{name}.json")))
             .respond_with(ResponseTemplate::new(200).set_body_string(body.into()))
@@ -251,7 +251,7 @@ impl TestEnv {
     }
 
     /// Serve `bottle` from the conventional bottle URL of `name`-`version`.
-    pub async fn mount_bottle(&self, name: &str, version: &str, bottle: Vec<u8>) {
+    pub(crate) async fn mount_bottle(&self, name: &str, version: &str, bottle: Vec<u8>) {
         Mock::given(method("GET"))
             .and(path(bottle_path(name, version)))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle))
@@ -260,7 +260,7 @@ impl TestEnv {
     }
 
     /// Serve a whole bottled formula — JSON and payload — and return its sha256.
-    pub async fn mount_bottled_formula(
+    pub(crate) async fn mount_bottled_formula(
         &self,
         name: &str,
         version: &str,
@@ -270,7 +270,7 @@ impl TestEnv {
             .await
     }
 
-    pub async fn mount_bottled_formula_with_deps(
+    pub(crate) async fn mount_bottled_formula_with_deps(
         &self,
         name: &str,
         version: &str,

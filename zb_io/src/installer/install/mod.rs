@@ -391,9 +391,11 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
+    use tempfile::TempDir;
     use wiremock::matchers::{method, path};
-    use wiremock::{Mock, ResponseTemplate};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    use super::*;
     use crate::test_support::*;
 
     #[tokio::test]
