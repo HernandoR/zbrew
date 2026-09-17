@@ -1,7 +1,7 @@
 use console::style;
 
 pub async fn execute(
-    installer: &mut zb_io::Installer,
+    installer: &mut zb_installer::Installer,
     quiet: bool,
     verbose: bool,
     json: bool,

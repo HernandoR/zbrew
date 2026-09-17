@@ -1,7 +1,7 @@
 //! Fixtures shared by the command-level tests: a wiremock-backed Homebrew
 //! API plus an `Installer` pointed at a scratch root.
 //!
-//! Mirrors `zb_io`'s `installer::install::test_support` so a command test
+//! Mirrors `zb_installer`'s `test_support` so a command test
 //! reads the same way as the installer tests it drives.
 
 use std::fmt::Write as _;
@@ -14,7 +14,9 @@ use sha2::{Digest, Sha256};
 use std::io::Write as _;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use zb_io::{ApiClient, BlobCache, Cellar, Database, Installer, Linker, Store};
+use zb_installer::{Cellar, Installer, Linker};
+use zb_net::ApiClient;
+use zb_store::{BlobCache, Database, Store};
 
 /// The bottle tag this platform selects, so the mocked formula JSON offers a
 /// bottle `select_bottle` accepts.

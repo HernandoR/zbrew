@@ -3,7 +3,7 @@ use console::style;
 use std::process::Command;
 
 pub async fn execute(
-    installer: &mut zb_io::Installer,
+    installer: &mut zb_installer::Installer,
     yes: bool,
     force: bool,
     ui: &mut StdUi,
@@ -11,7 +11,7 @@ pub async fn execute(
     ui.heading("Fetching installed Homebrew packages...")
         .map_err(ui_error)?;
 
-    let packages = zb_io::get_homebrew_packages()?;
+    let packages = zb_installer::get_homebrew_packages()?;
 
     if packages.formulas.is_empty()
         && packages.non_core_formulas.is_empty()
@@ -235,7 +235,7 @@ pub async fn execute(
 
 // FIXME: Abstract this return type to a more structured type (e.g., a struct)
 fn check_install_status(
-    installer: &zb_io::Installer,
+    installer: &zb_installer::Installer,
     formula_names: &[String],
 ) -> Result<(Vec<String>, Vec<String>), zb_core::Error> {
     let mut successfully_installed = Vec::new();

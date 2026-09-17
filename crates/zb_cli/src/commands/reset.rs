@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use zb_io::validate_destructive_path;
+use zb_core::validate_destructive_path;
 
 use crate::init::{InitError, run_init};
 use crate::ui::{PromptDefault, StdUi};

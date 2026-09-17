@@ -3,13 +3,13 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use zb_io::{InstallProgress, ProgressCallback};
+use zb_core::{InstallProgress, ProgressCallback};
 
 use crate::ui::StdUi;
 use crate::utils::{normalize_formula_name, suggest_homebrew, suggest_missing_formula_matches};
 
 pub async fn execute(
-    installer: &mut zb_io::Installer,
+    installer: &mut zb_installer::Installer,
     formulas: Vec<String>,
     no_link: bool,
     build_from_source: bool,
@@ -40,7 +40,7 @@ pub async fn execute(
         }
     }
 
-    let mut outcome = zb_io::ExecuteResult::default();
+    let mut outcome = zb_installer::ExecuteResult::default();
 
     if !normalized_names.is_empty() {
         let plan = match installer
@@ -90,7 +90,7 @@ pub async fn execute(
 /// along with why. Both halves are printed even when the command is about to
 /// exit non-zero.
 fn report_outcome(
-    outcome: &zb_io::ExecuteResult,
+    outcome: &zb_installer::ExecuteResult,
     elapsed: std::time::Duration,
     ui: &mut StdUi,
 ) -> Result<(), zb_core::Error> {
@@ -127,11 +127,11 @@ fn report_outcome(
 /// `Err` only means the batch could not start. Per-package outcomes come back
 /// in the returned `ExecuteResult`, so the caller still learns what installed.
 pub async fn execute_formula_plan(
-    installer: &mut zb_io::Installer,
-    plan: zb_io::InstallPlan,
+    installer: &mut zb_installer::Installer,
+    plan: zb_installer::InstallPlan,
     no_link: bool,
     ui: &mut StdUi,
-) -> Result<zb_io::ExecuteResult, zb_core::Error> {
+) -> Result<zb_installer::ExecuteResult, zb_core::Error> {
     ui.heading(format!(
         "Resolving dependencies ({} packages)...",
         plan.items.len()

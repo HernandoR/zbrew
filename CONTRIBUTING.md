@@ -25,11 +25,25 @@ the [community discord](https://discord.gg/TVatsQBFJt); we would be more than ha
 
 ## Project Structure
 
-zbrew is organized as a Cargo workspace with three crates, all under `crates/`:
+zbrew is organized as a Cargo workspace with six crates, all under `crates/`:
 
-- `crates/zb_core`: Core data models and domain logic (formula resolution, bottle selection)
-- `crates/zb_io`: I/O operations (API client, downloads, extraction, installation)
+- `crates/zb_core`: Core data models and domain logic (formula resolution, bottle selection), plus
+  the low-level helpers every other crate shares (checksums, path validation, progress events, CA
+  bundle discovery)
+- `crates/zb_extract`: Archive extraction and binary patching (prefix relocation, Mach-O/ELF/phar)
+- `crates/zb_store`: On-disk state — the sqlite database, the blob cache and the extracted-archive
+  store
+- `crates/zb_net`: Networking — the Homebrew API client, its response cache, the bottle downloader
+  and the shared TLS configuration
+- `crates/zb_installer`: Install orchestration — plan/install/upgrade/uninstall/doctor/outdated/gc,
+  cellar linking, and the source-build fallback
 - `crates/zb_cli`: Command-line interface
+
+The dependency direction is strictly one-way:
+
+```
+zb_core <- zb_extract <- zb_store <- zb_net <- zb_installer <- zb_cli
+```
 
 Any changes you make that touch several crates should be organized properly. See [commit hygiene](#commit-hygiene)
 

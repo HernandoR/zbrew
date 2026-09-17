@@ -1,7 +1,7 @@
 use console::style;
-use zb_io::InstalledKeg;
+use zb_store::InstalledKeg;
 
-pub fn execute(installer: &mut zb_io::Installer, all: bool) -> Result<(), zb_core::Error> {
+pub fn execute(installer: &mut zb_installer::Installer, all: bool) -> Result<(), zb_core::Error> {
     let installed = installer.list_installed()?;
     let (shown, hidden) = partition_for_display(&installed, all);
 
@@ -51,7 +51,7 @@ fn partition_for_display(installed: &[InstalledKeg], all: bool) -> (Vec<&Install
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zb_io::InstallReason;
+    use zb_store::InstallReason;
 
     fn keg(name: &str, reason: InstallReason) -> InstalledKeg {
         InstalledKeg {

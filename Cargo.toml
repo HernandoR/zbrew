@@ -1,5 +1,12 @@
 [workspace]
-members = ["crates/zb_core", "crates/zb_io", "crates/zb_cli"]
+members = [
+    "crates/zb_core",
+    "crates/zb_extract",
+    "crates/zb_store",
+    "crates/zb_net",
+    "crates/zb_installer",
+    "crates/zb_cli",
+]
 resolver = "3"
 
 [workspace.package]

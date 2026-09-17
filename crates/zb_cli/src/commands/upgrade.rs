@@ -3,13 +3,13 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use zb_io::{InstallProgress, ProgressCallback};
+use zb_core::{InstallProgress, ProgressCallback};
 
 use crate::ui::StdUi;
 use crate::utils::normalize_formula_name;
 
 pub async fn execute(
-    installer: &mut zb_io::Installer,
+    installer: &mut zb_installer::Installer,
     formulas: Vec<String>,
     build_from_source: bool,
     no_link: bool,
@@ -256,7 +256,7 @@ fn ui_error(err: std::io::Error) -> zb_core::Error {
 mod tests {
     use tempfile::TempDir;
     use wiremock::MockServer;
-    use zb_io::Installer;
+    use zb_installer::Installer;
 
     use crate::commands::test_support::{
         make_installer, mount_formula, mount_formula_up_to, mount_formula_with_failing_bottle,

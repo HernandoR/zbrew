@@ -3,7 +3,7 @@ use console::style;
 use crate::ui::StdUi;
 
 pub fn execute(
-    installer: &mut zb_io::Installer,
+    installer: &mut zb_installer::Installer,
     repair: bool,
     ui: &mut StdUi,
 ) -> Result<(), zb_core::Error> {
