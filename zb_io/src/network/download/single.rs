@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use futures_util::future::select_all;
-use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH};
+use reqwest::header::CONTENT_LENGTH;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Notify, RwLock, Semaphore};
 use tracing::warn;
@@ -17,9 +17,7 @@ use crate::progress::InstallProgress;
 use crate::storage::blob::BlobCache;
 use zb_core::Error;
 
-use super::auth::{
-    TokenCache, bearer_header, fetch_download_response_internal, get_cached_token_for_url_internal,
-};
+use super::auth::{TokenCache, fetch_download_response_internal, fetch_head_response_internal};
 use super::chunked::{ChunkedDownloadContext, download_with_chunks, server_supports_ranges};
 use super::{
     CHUNKED_DOWNLOAD_THRESHOLD, DownloadProgressCallback, GLOBAL_DOWNLOAD_CONCURRENCY,
@@ -138,15 +136,10 @@ impl Downloader {
         progress: Option<DownloadProgressCallback>,
     ) -> Result<PathBuf, Error> {
         let (use_chunked, file_size) = {
-            let cached_token =
-                get_cached_token_for_url_internal(&self.token_cache, primary_url).await;
+            let probe =
+                fetch_head_response_internal(&self.client, &self.token_cache, primary_url).await;
 
-            let mut request = self.client.head(primary_url);
-            if let Some(token) = &cached_token {
-                request = request.header(AUTHORIZATION, bearer_header(token)?);
-            }
-
-            match request.send().await {
+            match probe {
                 Ok(response) if response.status().is_success() => {
                     let content_length = response
                         .headers()
