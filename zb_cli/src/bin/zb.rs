@@ -28,6 +28,12 @@ async fn run(cli: Cli) -> Result<(), zb_core::Error> {
         return commands::completion::execute(shell);
     }
 
+    // Like `completion`, generating documentation must not touch the root or the
+    // prefix: `man zb` has to work on a machine where `zb init` never ran.
+    if let Commands::Man { output_dir } = &cli.command {
+        return commands::man::execute(output_dir.as_deref());
+    }
+
     let root = get_root_path(cli.root);
     let prefix = get_prefix_path(cli.prefix, &root);
 
@@ -69,6 +75,7 @@ async fn run(cli: Cli) -> Result<(), zb_core::Error> {
     match cli.command {
         Commands::Init { .. } => unreachable!(),
         Commands::Completion { .. } => unreachable!(),
+        Commands::Man { .. } => unreachable!(),
         Commands::Install {
             formulas,
             no_link,

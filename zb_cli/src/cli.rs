@@ -186,6 +186,15 @@ pub enum Commands {
         )]
         shell: clap_complete::shells::Shell,
     },
+    /// Generate the zb manual page
+    Man {
+        #[arg(
+            long,
+            value_name = "DIR",
+            help = "Write zb.1 and a page per subcommand to DIR instead of writing zb.1 to stdout"
+        )]
+        output_dir: Option<PathBuf>,
+    },
     /// Run an installed formula as a command
     Run {
         #[arg(help = "Name of the formula to run")]
