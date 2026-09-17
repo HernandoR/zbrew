@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use tracing::warn;
-use zb_core::{BuildPlan, Error, Formula, InstallMethod, select_bottle};
+use zb_core::{BuildPlan, Error, Formula, InstallMethod, PackageFailure, select_bottle};
 
-use super::{InstallPlan, Installer, PlanFailure, PlannedInstall};
+use super::{InstallPlan, Installer, PlannedInstall};
 
 impl Installer {
     pub async fn plan(&self, names: &[String]) -> Result<InstallPlan, Error> {
@@ -34,7 +34,7 @@ impl Installer {
         &self,
         names: &[String],
         build_from_source: bool,
-    ) -> (InstallPlan, Vec<PlanFailure>) {
+    ) -> (InstallPlan, Vec<PackageFailure>) {
         let (formulas, fetch_failures) = self.fetch_all_formulas_best_effort(names).await;
         let mut items = Vec::new();
         let mut failures = Vec::new();
@@ -47,7 +47,7 @@ impl Installer {
             }
 
             if let Some(error) = fetch_failures.get(name) {
-                failures.push(PlanFailure {
+                failures.push(PackageFailure {
                     name: name.clone(),
                     error: error.clone(),
                 });
@@ -55,7 +55,7 @@ impl Installer {
             }
 
             if !formulas.contains_key(name) {
-                failures.push(PlanFailure {
+                failures.push(PackageFailure {
                     name: name.clone(),
                     error: Error::MissingFormula { name: name.clone() },
                 });
@@ -77,7 +77,7 @@ impl Installer {
                         let formula = formulas.get(&install_name).cloned().unwrap();
                         match self.plan_item(install_name.clone(), formula, build_from_source) {
                             Ok(item) => items.push(item),
-                            Err(error) => failures.push(PlanFailure {
+                            Err(error) => failures.push(PackageFailure {
                                 name: install_name,
                                 error,
                             }),
@@ -85,7 +85,7 @@ impl Installer {
                     }
                 }
                 Err(error) => {
-                    failures.extend(valid_roots.into_iter().map(|name| PlanFailure {
+                    failures.extend(valid_roots.into_iter().map(|name| PackageFailure {
                         name,
                         error: error.clone(),
                     }));
@@ -274,7 +274,7 @@ fn root_dependency_failure(
     root: &str,
     formulas: &BTreeMap<String, Formula>,
     fetch_failures: &HashMap<String, Error>,
-) -> Option<PlanFailure> {
+) -> Option<PackageFailure> {
     let mut seen = HashSet::new();
     let mut stack = vec![root.to_string()];
 
@@ -289,7 +289,7 @@ fn root_dependency_failure(
 
         for dep in formula.runtime_dependencies() {
             if let Some(error) = fetch_failures.get(&dep) {
-                return Some(PlanFailure {
+                return Some(PackageFailure {
                     name: root.to_string(),
                     error: Error::ExecutionError {
                         message: format!("dependency '{dep}' could not be planned: {error}"),

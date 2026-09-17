@@ -24,7 +24,7 @@ use crate::storage::blob::BlobCache;
 use crate::storage::db::{Database, InstallReason};
 use crate::storage::store::Store;
 
-use zb_core::{Error, Formula, InstallMethod};
+use zb_core::{Error, Formula, InstallMethod, PackageFailure, collapse_failures};
 
 use bottle::dependency_cellar_path;
 
@@ -81,15 +81,36 @@ impl InstallPlan {
     }
 }
 
-#[derive(Debug)]
-pub struct PlanFailure {
-    pub name: String,
-    pub error: Error,
+/// What a batch of installs actually did.
+///
+/// A batch is never all-or-nothing once it starts executing, so both halves
+/// are always reported: `installed` names every package that landed and
+/// `failed` names every one that did not, each with its own reason. Nothing is
+/// overwritten and nothing is discarded — a caller that needs a `Result` calls
+/// [`ExecuteResult::to_error`] to collapse the failures itself.
+#[derive(Debug, Default)]
+pub struct ExecuteResult {
+    pub installed: Vec<String>,
+    pub failed: Vec<PackageFailure>,
 }
 
-#[derive(Debug)]
-pub struct ExecuteResult {
-    pub installed: usize,
+impl ExecuteResult {
+    pub fn installed_count(&self) -> usize {
+        self.installed.len()
+    }
+
+    /// Fold another batch's outcome into this one, preserving both halves.
+    pub fn absorb(&mut self, other: ExecuteResult) {
+        self.installed.extend(other.installed);
+        self.failed.extend(other.failed);
+    }
+
+    /// The single error that represents this batch's failures, or `None` when
+    /// every package installed. One failure keeps its own error variant;
+    /// several become an `Error::BatchFailure` naming all of them.
+    pub fn to_error(&self) -> Option<Error> {
+        collapse_failures(self.failed.clone())
+    }
 }
 
 /// A package that has a newer version available upstream.
@@ -134,6 +155,12 @@ impl Installer {
         self.api_client.clear_cache()
     }
 
+    /// Run an install plan.
+    ///
+    /// `Err` means the batch never started (the install lock could not be
+    /// taken). Once it starts, per-package outcomes are reported in the
+    /// returned [`ExecuteResult`] — check `failed` before treating `Ok` as
+    /// success.
     pub async fn execute(&mut self, plan: InstallPlan, link: bool) -> Result<ExecuteResult, Error> {
         self.execute_with_progress(plan, link, None).await
     }
@@ -170,11 +197,10 @@ impl Installer {
             .partition(|item| matches!(item.method, InstallMethod::Bottle(_)));
 
         if bottle_items.is_empty() && source_items.is_empty() {
-            return Ok(ExecuteResult { installed: 0 });
+            return Ok(ExecuteResult::default());
         }
 
-        let mut installed = 0usize;
-        let mut error: Option<Error> = None;
+        let mut outcome = ExecuteResult::default();
 
         if !bottle_items.is_empty() {
             let requests: Vec<DownloadRequest> = bottle_items
@@ -201,27 +227,32 @@ impl Installer {
                 .downloader
                 .download_streaming(requests, download_progress.clone());
 
-            while let Some(result) = rx.recv().await {
-                match result {
+            while let Some((index, result)) = rx.recv().await {
+                let item = &bottle_items[index];
+                let attempt = match result {
                     Ok(download) => {
-                        match self
-                            .process_bottle_item(
-                                &bottle_items[download.index],
-                                &download,
-                                &download_progress,
-                                link,
-                                reason,
-                                &report,
-                            )
-                            .await
-                        {
-                            Ok(()) => installed += 1,
-                            Err(e) => error = Some(e),
-                        }
+                        self.process_bottle_item(
+                            item,
+                            &download,
+                            &download_progress,
+                            link,
+                            reason,
+                            &report,
+                        )
+                        .await
                     }
-                    Err(e) => {
-                        error = Some(e);
-                    }
+                    Err(e) => Err(e),
+                };
+
+                match attempt {
+                    Ok(()) => outcome.installed.push(item.install_name.clone()),
+                    // Every failure is kept, not just the last one: with
+                    // downloads running in parallel, overwriting a single
+                    // slot both lost failures and made which one survived
+                    // depend on completion order.
+                    Err(e) => outcome
+                        .failed
+                        .push(PackageFailure::new(item.install_name.clone(), e)),
                 }
             }
         }
@@ -239,55 +270,62 @@ impl Installer {
                 .install_from_source(item, build_plan, link, reason, &report)
                 .await
             {
-                Ok(()) => installed += 1,
-                Err(e) => {
-                    error = Some(e);
-                    continue;
-                }
+                Ok(()) => outcome.installed.push(item.install_name.clone()),
+                Err(e) => outcome
+                    .failed
+                    .push(PackageFailure::new(item.install_name.clone(), e)),
             }
         }
 
-        if let Some(e) = error {
-            return Err(e);
-        }
-
-        Ok(ExecuteResult { installed })
+        Ok(outcome)
     }
 
+    /// Plan and install `names`.
+    ///
+    /// `Err` is reserved for failures that stop the batch before anything is
+    /// attempted — planning cannot resolve the requested formulas, or the
+    /// install lock is unavailable. Anything that goes wrong per package is
+    /// reported in the returned [`ExecuteResult`], alongside what succeeded.
+    /// Casks are installed even when a formula failed; they are independent
+    /// packages and the caller asked for both.
     pub async fn install(&mut self, names: &[String], link: bool) -> Result<ExecuteResult, Error> {
         let (casks, formulas): (Vec<_>, Vec<_>) = names
             .iter()
             .cloned()
             .partition(|name| name.starts_with("cask:"));
 
-        let mut installed = 0usize;
+        let mut outcome = ExecuteResult::default();
 
         if !formulas.is_empty() {
             let plan = self.plan(&formulas).await?;
-            installed += self.execute(plan, link).await?.installed;
+            outcome.absorb(self.execute(plan, link).await?);
         }
 
         if !casks.is_empty() {
-            installed += self.install_casks(&casks, link).await?.installed;
+            outcome.absorb(self.install_casks(&casks, link).await?);
         }
 
-        Ok(ExecuteResult { installed })
+        Ok(outcome)
     }
 
+    /// Install every `cask:`-prefixed name, carrying on past a cask that
+    /// fails so one broken token cannot hide the rest of the batch.
     pub async fn install_casks(
         &mut self,
         names: &[String],
         link: bool,
     ) -> Result<ExecuteResult, Error> {
-        let mut installed = 0usize;
+        let mut outcome = ExecuteResult::default();
         for name in names {
             let token = name
                 .strip_prefix("cask:")
                 .expect("install_casks expects cask: prefixed names");
-            self.install_single_cask(token, link).await?;
-            installed += 1;
+            match self.install_single_cask(token, link).await {
+                Ok(()) => outcome.installed.push(token.to_string()),
+                Err(e) => outcome.failed.push(PackageFailure::new(token, e)),
+            }
         }
-        Ok(ExecuteResult { installed })
+        Ok(outcome)
     }
 
     pub fn is_installed(&self, name: &str) -> bool {
@@ -501,8 +539,17 @@ mod tests {
         let mut installer = env.installer();
         let result = installer
             .install(&["goodpkg".to_string(), "badpkg".to_string()], false)
-            .await;
-        assert!(result.is_err());
+            .await
+            .unwrap();
+        assert_eq!(result.installed, ["goodpkg"]);
+        assert_eq!(
+            result
+                .failed
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect::<Vec<_>>(),
+            ["badpkg"]
+        );
 
         assert!(installer.db.get_installed("goodpkg").is_some());
         assert!(installer.db.get_installed("badpkg").is_none());
@@ -590,25 +637,27 @@ mod tests {
             .await
             .unwrap();
 
+        let mut installed = result.installed.clone();
+        installed.sort();
         assert_eq!(
-            result.installed, 4,
+            installed,
+            ["batchdep", "batchone", "batchthree", "batchtwo"],
             "three roots plus the one dependency they share"
         );
+        assert!(result.failed.is_empty());
         for name in ["batchone", "batchtwo", "batchthree", "batchdep"] {
             assert!(installer.db.get_installed(name).is_some(), "{name} missing");
             assert!(prefix.join("bin").join(name).exists(), "{name} not linked");
         }
     }
 
-    /// When more than one package in a batch fails, `execute_inner` overwrites
-    /// `error` each time, so only one failure ever reaches the caller — and
-    /// because bottles complete in download order, which one survives is not
-    /// deterministic. The successful count is discarded along with it.
-    ///
-    /// Asserted as-is to document today's behaviour; aggregating the failures
-    /// (and reporting what did install) would be a behaviour change.
+    /// Every failure in a batch is reported, not just the last one to land,
+    /// and the packages that did install are named alongside them. Bottles
+    /// complete in download order, so an accumulator that held one error at a
+    /// time both lost failures and made the survivor non-deterministic
+    /// (issue #102).
     #[tokio::test]
-    async fn only_one_error_survives_when_several_packages_fail() {
+    async fn every_failure_is_reported_alongside_what_installed() {
         let mock_server = MockServer::start().await;
         let tmp = TempDir::new().unwrap();
 
@@ -642,14 +691,110 @@ mod tests {
                 ],
                 true,
             )
-            .await;
+            .await
+            .unwrap();
 
-        // One error for two failures, and no way to learn that `survivor` is
-        // installed except by asking the database afterwards.
-        assert!(result.is_err());
+        assert_eq!(
+            result.installed,
+            ["survivor"],
+            "the package that installed must still be reported"
+        );
+
+        let mut failed: Vec<&str> = result.failed.iter().map(|f| f.name.as_str()).collect();
+        failed.sort();
+        assert_eq!(
+            failed,
+            ["casualtyone", "casualtytwo"],
+            "both failures must survive, not just the last one to complete"
+        );
+        for failure in &result.failed {
+            assert!(
+                matches!(failure.error, Error::NetworkFailure { .. }),
+                "{} should carry its own download error, got {:?}",
+                failure.name,
+                failure.error
+            );
+        }
+
+        // Collapsing for a caller that needs a `Result` still names both.
+        let rendered = result.to_error().unwrap().to_string();
+        assert!(rendered.contains("casualtyone"), "got {rendered}");
+        assert!(rendered.contains("casualtytwo"), "got {rendered}");
+
         assert!(installer.db.get_installed("survivor").is_some());
         assert!(installer.db.get_installed("casualtyone").is_none());
         assert!(installer.db.get_installed("casualtytwo").is_none());
+    }
+
+    /// Casks and formulas are independent packages. A formula that fails must
+    /// not cancel the casks asked for in the same invocation (issue #102).
+    #[tokio::test]
+    async fn a_failed_formula_does_not_cancel_the_casks_in_the_same_batch() {
+        let env = TestEnv::new().await;
+
+        // A formula that resolves but whose bottle never arrives.
+        env.mount_formula(
+            "brokenformula",
+            formula_json(
+                "brokenformula",
+                "1.0.0",
+                &env.bottle_url("brokenformula", "1.0.0"),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+        )
+        .await;
+        Mock::given(method("GET"))
+            .and(path(bottle_path("brokenformula", "1.0.0")))
+            .respond_with(ResponseTemplate::new(500).set_body_string("download failed"))
+            .mount(&env.server)
+            .await;
+
+        let binary = b"#!/bin/sh\necho tool".to_vec();
+        let binary_sha = sha256_hex(&binary);
+        Mock::given(method("GET"))
+            .and(path("/cask/toolcask.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"token":"toolcask","version":"2.0.0","url":"{uri}/downloads/toolcask",
+                    "sha256":"{binary_sha}","artifacts":[{{"binary":["toolcask"]}}]}}"#,
+                uri = env.uri()
+            )))
+            .mount(&env.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/downloads/toolcask"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(binary))
+            .mount(&env.server)
+            .await;
+
+        let mut installer = env.installer_with(
+            ApiClient::with_base_url(format!("{}/formula", env.uri()))
+                .unwrap()
+                .with_cask_base_url(format!("{}/cask", env.uri())),
+        );
+
+        let result = installer
+            .install(
+                &["brokenformula".to_string(), "cask:toolcask".to_string()],
+                true,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.installed,
+            ["toolcask"],
+            "the cask must still be installed after the formula failed"
+        );
+        assert_eq!(
+            result
+                .failed
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect::<Vec<_>>(),
+            ["brokenformula"]
+        );
+        assert!(installer.db.get_installed("cask:toolcask").is_some());
+        assert!(env.prefix.join("bin/toolcask").exists());
     }
 
     #[tokio::test]
@@ -664,8 +809,18 @@ mod tests {
         let conn = rusqlite::Connection::open(env.db_path()).unwrap();
         conn.execute("DROP TABLE installed_kegs", []).unwrap();
 
-        let result = installer.install(&["rollbackme".to_string()], true).await;
-        assert!(result.is_err());
+        let result = installer
+            .install(&["rollbackme".to_string()], true)
+            .await
+            .unwrap();
+        assert_eq!(
+            result
+                .failed
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect::<Vec<_>>(),
+            ["rollbackme"]
+        );
 
         assert!(!env.root.join("cellar/rollbackme/1.0.0").exists());
         assert!(!env.prefix.join("bin/rollbackme").exists());
@@ -705,8 +860,16 @@ mod tests {
 
         let result = installer
             .install(&["hashicorp/tap/terraform".to_string()], true)
-            .await;
-        assert!(result.is_err());
+            .await
+            .unwrap();
+        assert_eq!(
+            result
+                .failed
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect::<Vec<_>>(),
+            ["hashicorp/tap/terraform"]
+        );
 
         assert!(!env.root.join("cellar/terraform/1.10.0").exists());
         assert!(!env.prefix.join("bin/terraform").exists());
@@ -859,13 +1022,18 @@ mod tests {
             .unwrap();
         assert!(env.prefix.join("bin/shared").exists());
 
-        let err = installer
+        let result = installer
             .install(&["secondpkg".to_string()], true)
             .await
-            .unwrap_err();
+            .unwrap();
         assert!(
-            matches!(err, zb_core::Error::LinkConflict { .. }),
-            "expected a link conflict, got {err:?}"
+            matches!(
+                result.failed.as_slice(),
+                [failure] if failure.name == "secondpkg"
+                    && matches!(failure.error, zb_core::Error::LinkConflict { .. })
+            ),
+            "expected a link conflict for secondpkg, got {:?}",
+            result.failed
         );
 
         // The keg is installed and known to the database, so it can be removed.

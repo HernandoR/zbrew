@@ -68,11 +68,16 @@ impl ParallelDownloader {
         .await
     }
 
+    /// Download every request concurrently, yielding each outcome as it lands.
+    ///
+    /// The index of the originating request is reported for failures too, not
+    /// just successes, so a caller can name the package a download error
+    /// belongs to.
     pub(crate) fn download_streaming(
         &self,
         requests: Vec<DownloadRequest>,
         progress: Option<DownloadProgressCallback>,
-    ) -> mpsc::Receiver<Result<DownloadResult, Error>> {
+    ) -> mpsc::Receiver<(usize, Result<DownloadResult, Error>)> {
         let (tx, rx) = mpsc::channel(requests.len().max(1));
 
         for (index, req) in requests.into_iter().enumerate() {
@@ -86,7 +91,7 @@ impl ParallelDownloader {
                 let result =
                     Self::download_with_dedup(downloader, semaphore, inflight, req, progress).await;
                 let _ = tx
-                    .send(result.map(|blob_path| DownloadResult { blob_path, index }))
+                    .send((index, result.map(|blob_path| DownloadResult { blob_path })))
                     .await;
             });
         }
@@ -246,7 +251,7 @@ mod tests {
 
         let mut rx = downloader.download_streaming(requests, None);
         let mut results = Vec::new();
-        while let Some(result) = rx.recv().await {
+        while let Some((_, result)) = rx.recv().await {
             results.push(result.unwrap());
         }
 

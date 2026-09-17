@@ -99,11 +99,11 @@ pub async fn execute(
     }
 
     if !plan.items.is_empty() {
+        // Per-package failures are already explained by `execute_formula_plan`
+        // and re-counted below from the installed database, so the outcome is
+        // deliberately not propagated here.
         crate::commands::install::execute_formula_plan(
-            installer,
-            &formula_names,
-            plan,
-            false, // no_link
+            installer, plan, false, // no_link
             ui,
         )
         .await
