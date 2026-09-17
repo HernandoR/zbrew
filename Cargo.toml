@@ -1,5 +1,5 @@
 [workspace]
-members = ["zb_core", "zb_io", "zb_cli"]
+members = ["crates/zb_core", "crates/zb_io", "crates/zb_cli"]
 resolver = "3"
 
 [workspace.package]

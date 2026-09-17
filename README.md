@@ -99,7 +99,7 @@ brew install HernandoR/zbrew/zbrew
 
    ```bash
    cd zbrew
-   just install            # or: cargo install --path zb_cli --locked
+   just install            # or: cargo install --path crates/zb_cli --locked
    ```
 
 The `just install` recipe builds `zb` and `zbx`, copies them to `$ZBREW_BIN`,

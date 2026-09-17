@@ -94,7 +94,7 @@ brew install HernandoR/zbrew/zbrew
 
    ```bash
    cd zbrew
-   just install            # 或：cargo install --path zb_cli --locked
+   just install            # 或：cargo install --path crates/zb_cli --locked
    ```
 
 `just install` 会构建 `zb` 和 `zbx`，把它们复制到 `$ZBREW_BIN`，然后运行 `zb init`。
