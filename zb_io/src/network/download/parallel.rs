@@ -10,7 +10,7 @@ use zb_core::Error;
 use super::single::Downloader;
 use super::{DownloadProgressCallback, DownloadResult, GLOBAL_DOWNLOAD_CONCURRENCY};
 
-pub struct DownloadRequest {
+pub(crate) struct DownloadRequest {
     pub url: String,
     pub sha256: String,
     pub name: String,
@@ -18,14 +18,14 @@ pub struct DownloadRequest {
 
 type InflightMap = HashMap<String, Arc<tokio::sync::broadcast::Sender<Result<PathBuf, String>>>>;
 
-pub struct ParallelDownloader {
+pub(crate) struct ParallelDownloader {
     downloader: Arc<Downloader>,
     semaphore: Arc<Semaphore>,
     inflight: Arc<Mutex<InflightMap>>,
 }
 
 impl ParallelDownloader {
-    pub fn new(blob_cache: BlobCache) -> Self {
+    pub(crate) fn new(blob_cache: BlobCache) -> Self {
         let semaphore = Arc::new(Semaphore::new(GLOBAL_DOWNLOAD_CONCURRENCY));
         Self {
             downloader: Arc::new(Downloader::with_semaphore(
@@ -37,7 +37,7 @@ impl ParallelDownloader {
         }
     }
 
-    pub fn with_concurrency(blob_cache: BlobCache, concurrency: usize) -> Self {
+    pub(crate) fn with_concurrency(blob_cache: BlobCache, concurrency: usize) -> Self {
         let semaphore = Arc::new(Semaphore::new(concurrency));
         Self {
             downloader: Arc::new(Downloader::with_semaphore(
@@ -49,11 +49,11 @@ impl ParallelDownloader {
         }
     }
 
-    pub fn remove_blob(&self, sha256: &str) -> bool {
+    pub(crate) fn remove_blob(&self, sha256: &str) -> bool {
         self.downloader.remove_blob(sha256)
     }
 
-    pub async fn download_single(
+    pub(crate) async fn download_single(
         &self,
         request: DownloadRequest,
         progress: Option<DownloadProgressCallback>,
@@ -68,42 +68,7 @@ impl ParallelDownloader {
         .await
     }
 
-    pub async fn download_all(
-        &self,
-        requests: Vec<DownloadRequest>,
-    ) -> Result<Vec<PathBuf>, Error> {
-        self.download_all_with_progress(requests, None).await
-    }
-
-    pub async fn download_all_with_progress(
-        &self,
-        requests: Vec<DownloadRequest>,
-        progress: Option<DownloadProgressCallback>,
-    ) -> Result<Vec<PathBuf>, Error> {
-        let handles: Vec<_> = requests
-            .into_iter()
-            .map(|req| {
-                let downloader = self.downloader.clone();
-                let semaphore = self.semaphore.clone();
-                let inflight = self.inflight.clone();
-                let progress = progress.clone();
-
-                tokio::spawn(async move {
-                    Self::download_with_dedup(downloader, semaphore, inflight, req, progress).await
-                })
-            })
-            .collect();
-
-        let mut results = Vec::with_capacity(handles.len());
-        for handle in handles {
-            let result = handle.await.map_err(Error::network("task join error"))??;
-            results.push(result);
-        }
-
-        Ok(results)
-    }
-
-    pub fn download_streaming(
+    pub(crate) fn download_streaming(
         &self,
         requests: Vec<DownloadRequest>,
         progress: Option<DownloadProgressCallback>,
@@ -116,19 +81,12 @@ impl ParallelDownloader {
             let inflight = self.inflight.clone();
             let progress = progress.clone();
             let tx = tx.clone();
-            let name = req.name.clone();
-            let sha256 = req.sha256.clone();
 
             tokio::spawn(async move {
                 let result =
                     Self::download_with_dedup(downloader, semaphore, inflight, req, progress).await;
                 let _ = tx
-                    .send(result.map(|blob_path| DownloadResult {
-                        name,
-                        sha256,
-                        blob_path,
-                        index,
-                    }))
+                    .send(result.map(|blob_path| DownloadResult { blob_path, index }))
                     .await;
             });
         }
@@ -242,7 +200,8 @@ mod tests {
             })
             .collect();
 
-        let _ = downloader.download_all(requests).await;
+        let mut rx = downloader.download_streaming(requests, None);
+        while rx.recv().await.is_some() {}
 
         let peak = max_concurrent.load(Ordering::SeqCst);
         assert!(
@@ -285,11 +244,15 @@ mod tests {
             })
             .collect();
 
-        let results = downloader.download_all(requests).await.unwrap();
+        let mut rx = downloader.download_streaming(requests, None);
+        let mut results = Vec::new();
+        while let Some(result) = rx.recv().await {
+            results.push(result.unwrap());
+        }
 
         assert_eq!(results.len(), 5);
-        for path in &results {
-            assert!(path.exists());
+        for result in &results {
+            assert!(result.blob_path.exists());
         }
     }
 }

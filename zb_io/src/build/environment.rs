@@ -3,7 +3,7 @@ use std::path::Path;
 
 use zb_core::BuildPlan;
 
-pub fn build_env(plan: &BuildPlan, prefix: &Path) -> HashMap<String, String> {
+pub(crate) fn build_env(plan: &BuildPlan, prefix: &Path) -> HashMap<String, String> {
     let mut env = HashMap::new();
 
     let bin_dir = prefix.join("bin");

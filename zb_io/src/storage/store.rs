@@ -24,15 +24,16 @@ impl Store {
         })
     }
 
-    pub fn entry_path(&self, store_key: &str) -> PathBuf {
+    pub(crate) fn entry_path(&self, store_key: &str) -> PathBuf {
         self.store_dir.join(store_key)
     }
 
-    pub fn has_entry(&self, store_key: &str) -> bool {
+    #[cfg(test)]
+    pub(crate) fn has_entry(&self, store_key: &str) -> bool {
         self.entry_path(store_key).exists()
     }
 
-    pub fn list_entries(&self) -> Result<Vec<String>, Error> {
+    pub(crate) fn list_entries(&self) -> Result<Vec<String>, Error> {
         let mut entries = Vec::new();
         for entry in
             fs::read_dir(&self.store_dir).map_err(Error::store("failed to read store directory"))?
@@ -51,7 +52,7 @@ impl Store {
         Ok(entries)
     }
 
-    pub fn ensure_entry(&self, store_key: &str, blob_path: &Path) -> Result<PathBuf, Error> {
+    pub(crate) fn ensure_entry(&self, store_key: &str, blob_path: &Path) -> Result<PathBuf, Error> {
         let entry_path = self.entry_path(store_key);
 
         // Fast path: already exists
@@ -93,7 +94,7 @@ impl Store {
     }
 
     /// Remove a store entry. This should only be called when the refcount is 0.
-    pub fn remove_entry(&self, store_key: &str) -> Result<(), Error> {
+    pub(crate) fn remove_entry(&self, store_key: &str) -> Result<(), Error> {
         let entry_path = self.entry_path(store_key);
 
         if !entry_path.exists() {

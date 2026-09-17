@@ -21,7 +21,7 @@ pub struct HomebrewMigrationPackages {
 }
 
 /// Parse Homebrew formulas from JSON output of `brew info --json=v1 --installed`
-pub fn parse_formulas_from_json(json: &serde_json::Value) -> Vec<HomebrewPackage> {
+pub(crate) fn parse_formulas_from_json(json: &serde_json::Value) -> Vec<HomebrewPackage> {
     let mut packages = Vec::new();
 
     if let Some(formulas) = json.as_array() {
@@ -46,7 +46,7 @@ pub fn parse_formulas_from_json(json: &serde_json::Value) -> Vec<HomebrewPackage
 }
 
 /// Parse Homebrew leaves from plain text output of `brew leaves`
-pub fn parse_leaves_from_plain_text(output: &str) -> Vec<String> {
+pub(crate) fn parse_leaves_from_plain_text(output: &str) -> Vec<String> {
     output
         .lines()
         .map(str::trim)
@@ -56,7 +56,7 @@ pub fn parse_leaves_from_plain_text(output: &str) -> Vec<String> {
 }
 
 /// Parse Homebrew casks from plain text output of `brew list --cask`
-pub fn parse_casks_from_plain_text(output: &str) -> Vec<HomebrewPackage> {
+pub(crate) fn parse_casks_from_plain_text(output: &str) -> Vec<HomebrewPackage> {
     output
         .lines()
         .filter(|line| !line.is_empty())
@@ -74,7 +74,7 @@ pub fn parse_casks_from_plain_text(output: &str) -> Vec<HomebrewPackage> {
 /// - Formulas from homebrew/core (migratable)
 /// - Formulas from other taps (not migratable)
 /// - Cask packages (not migratable)
-pub fn categorize_packages(packages: Vec<HomebrewPackage>) -> HomebrewMigrationPackages {
+pub(crate) fn categorize_packages(packages: Vec<HomebrewPackage>) -> HomebrewMigrationPackages {
     let mut formulas = Vec::new();
     let mut non_core_formulas = Vec::new();
     let mut casks = Vec::new();

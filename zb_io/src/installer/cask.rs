@@ -2,13 +2,13 @@ use serde_json::Value;
 use zb_core::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CaskBinary {
+pub(crate) struct CaskBinary {
     pub source: String,
     pub target: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedCask {
+pub(crate) struct ResolvedCask {
     pub install_name: String,
     pub token: String,
     pub version: String,
@@ -17,7 +17,7 @@ pub struct ResolvedCask {
     pub binaries: Vec<CaskBinary>,
 }
 
-pub fn resolve_cask(token: &str, cask: &Value) -> Result<ResolvedCask, Error> {
+pub(crate) fn resolve_cask(token: &str, cask: &Value) -> Result<ResolvedCask, Error> {
     let mut url = required_string(cask, "url")?;
     let mut sha256 = required_string(cask, "sha256")?;
     let version = required_string(cask, "version")?;

@@ -14,10 +14,7 @@ use sha2::{Digest, Sha256};
 use std::io::Write as _;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use zb_io::cellar::Cellar;
-use zb_io::network::ApiClient;
-use zb_io::storage::{BlobCache, Database, Store};
-use zb_io::{Installer, Linker};
+use zb_io::{ApiClient, BlobCache, Cellar, Database, Installer, Linker, Store};
 
 /// The bottle tag this platform selects, so the mocked formula JSON offers a
 /// bottle `select_bottle` accepts.

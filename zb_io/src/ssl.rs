@@ -1,23 +1,4 @@
-use crate::storage::db::Database;
 use std::path::{Path, PathBuf};
-
-pub fn find_ca_bundle(prefix: &Path, db: &Database) -> Option<PathBuf> {
-    let installed = db.get_installed("ca-certificates")?;
-
-    let keg_path = prefix
-        .join("Cellar")
-        .join("ca-certificates")
-        .join(&installed.version);
-
-    let candidates = [
-        keg_path.join("share/ca-certificates/cacert.pem"),
-        keg_path.join("share/ca-bundle.crt"),
-        keg_path.join("etc/openssl/cert.pem"),
-        keg_path.join("ssl/cert.pem"),
-    ];
-
-    candidates.into_iter().find(|p| p.exists())
-}
 
 pub fn find_ca_bundle_from_prefix(prefix: &Path) -> Option<PathBuf> {
     let candidates = [

@@ -9,19 +9,12 @@ use crate::extraction::patch::linux::patch_placeholders;
 #[cfg(target_os = "macos")]
 use crate::extraction::patch::macos::{codesign_and_strip_xattrs, patch_homebrew_placeholders};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CopyStrategy {
-    Clonefile,
-    Hardlink,
-    Copy,
-}
-
 pub struct Cellar {
     cellar_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MaterializedKeg {
+pub(crate) struct MaterializedKeg {
     pub name: String,
     pub version: String,
     pub path: PathBuf,
@@ -32,20 +25,21 @@ impl Cellar {
         Self::new_at(root.join("cellar"))
     }
 
-    pub fn new_at(cellar_dir: PathBuf) -> io::Result<Self> {
+    pub(crate) fn new_at(cellar_dir: PathBuf) -> io::Result<Self> {
         fs::create_dir_all(&cellar_dir)?;
         Ok(Self { cellar_dir })
     }
 
-    pub fn keg_path(&self, name: &str, version: &str) -> PathBuf {
+    pub(crate) fn keg_path(&self, name: &str, version: &str) -> PathBuf {
         self.cellar_dir.join(name).join(version)
     }
 
-    pub fn has_keg(&self, name: &str, version: &str) -> bool {
+    #[cfg(test)]
+    pub(crate) fn has_keg(&self, name: &str, version: &str) -> bool {
         self.keg_path(name, version).exists()
     }
 
-    pub fn list_kegs(&self) -> Result<Vec<MaterializedKeg>, Error> {
+    pub(crate) fn list_kegs(&self) -> Result<Vec<MaterializedKeg>, Error> {
         let mut kegs = Vec::new();
 
         for name_entry in fs::read_dir(&self.cellar_dir)
@@ -90,7 +84,7 @@ impl Cellar {
         Ok(kegs)
     }
 
-    pub fn materialize(
+    pub(crate) fn materialize(
         &self,
         name: &str,
         version: &str,
@@ -154,7 +148,7 @@ impl Cellar {
         Ok(())
     }
 
-    pub fn remove_keg(&self, name: &str, version: &str) -> Result<(), Error> {
+    pub(crate) fn remove_keg(&self, name: &str, version: &str) -> Result<(), Error> {
         let keg_path = self.keg_path(name, version);
 
         if !keg_path.exists() {

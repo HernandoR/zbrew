@@ -18,7 +18,7 @@ enum CompressionFormat {
     Unknown,
 }
 
-pub fn is_archive(path: &Path) -> Result<bool, Error> {
+pub(crate) fn is_archive(path: &Path) -> Result<bool, Error> {
     detect_compression(path).map(|fmt| !matches!(fmt, CompressionFormat::Unknown))
 }
 
@@ -57,11 +57,11 @@ fn detect_compression(path: &Path) -> Result<CompressionFormat, Error> {
     Ok(CompressionFormat::Unknown)
 }
 
-pub fn extract_tarball(tarball_path: &Path, dest_dir: &Path) -> Result<(), Error> {
+pub(crate) fn extract_tarball(tarball_path: &Path, dest_dir: &Path) -> Result<(), Error> {
     extract_archive(tarball_path, dest_dir)
 }
 
-pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), Error> {
+pub(crate) fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), Error> {
     let format = detect_compression(archive_path)?;
 
     let file = File::open(archive_path).map_err(Error::store("failed to open archive"))?;
@@ -269,13 +269,6 @@ fn normalize_path(path: &Path) -> PathBuf {
 
     // Reconstruct the path from components
     components.iter().collect()
-}
-
-/// Extract a tarball from a reader (assumes gzip compression).
-/// For file-based extraction with auto-detection, use `extract_tarball` instead.
-pub fn extract_tarball_from_reader<R: Read>(reader: R, dest_dir: &Path) -> Result<(), Error> {
-    let decoder = GzDecoder::new(reader);
-    extract_tar_archive(decoder, dest_dir)
 }
 
 #[cfg(test)]

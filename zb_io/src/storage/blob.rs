@@ -22,16 +22,16 @@ impl BlobCache {
         Ok(Self { blobs_dir, tmp_dir })
     }
 
-    pub fn blob_path(&self, sha256: &str) -> PathBuf {
+    pub(crate) fn blob_path(&self, sha256: &str) -> PathBuf {
         self.blobs_dir.join(format!("{sha256}.tar.gz"))
     }
 
-    pub fn has_blob(&self, sha256: &str) -> bool {
+    pub(crate) fn has_blob(&self, sha256: &str) -> bool {
         self.blob_path(sha256).exists()
     }
 
     /// Remove a blob from the cache (used when extraction fails due to corruption)
-    pub fn remove_blob(&self, sha256: &str) -> io::Result<bool> {
+    pub(crate) fn remove_blob(&self, sha256: &str) -> io::Result<bool> {
         let path = self.blob_path(sha256);
         if path.exists() {
             fs::remove_file(&path)?;
@@ -41,7 +41,7 @@ impl BlobCache {
         }
     }
 
-    pub fn start_write(&self, sha256: &str) -> io::Result<BlobWriter> {
+    pub(crate) fn start_write(&self, sha256: &str) -> io::Result<BlobWriter> {
         let final_path = self.blob_path(sha256);
         let temp_file = NamedTempFile::new_in(&self.tmp_dir)?;
         Ok(BlobWriter {
@@ -51,17 +51,17 @@ impl BlobCache {
     }
 }
 
-pub struct BlobWriter {
+pub(crate) struct BlobWriter {
     temp_file: NamedTempFile,
     final_path: PathBuf,
 }
 
 impl BlobWriter {
-    pub fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+    pub(crate) fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.temp_file.seek(pos)
     }
 
-    pub fn commit(self) -> Result<PathBuf, Error> {
+    pub(crate) fn commit(self) -> Result<PathBuf, Error> {
         // Content-addressed: same sha256 = identical content, so overwrite is safe.
         // NamedTempFile::persist does an atomic rename(2) on Unix.
         // On drop (e.g. if persist is never called), the temp file is auto-deleted.

@@ -69,7 +69,7 @@ fn classify_elf(path: &Path) -> ElfKind {
 
 /// Patch @@HOMEBREW_CELLAR@@ and @@HOMEBREW_PREFIX@@ placeholders in both ELF binaries and text files.
 #[cfg(target_os = "linux")]
-pub fn patch_placeholders(
+pub(crate) fn patch_placeholders(
     keg_path: &Path,
     prefix_dir: &Path,
     _pkg_name: &str,

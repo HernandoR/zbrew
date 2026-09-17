@@ -6,7 +6,7 @@ use zb_core::Error;
 use crate::checksum::verify_sha256_bytes;
 use crate::extraction::extract_tarball;
 
-pub async fn download_and_extract_source(
+pub(crate) async fn download_and_extract_source(
     url: &str,
     expected_checksum: Option<&str>,
     work_dir: &Path,

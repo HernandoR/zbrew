@@ -20,18 +20,18 @@ const UNSUPPORTED_API_EXIT: i32 = 78;
 /// How every diagnostic the shim writes to stderr opens.
 const SHIM_ERROR_PREFIX: &str = "Error: ";
 
-pub struct BuildExecutor {
+pub(crate) struct BuildExecutor {
     prefix: PathBuf,
     work_root: PathBuf,
 }
 
 impl BuildExecutor {
-    pub fn new(prefix: PathBuf) -> Self {
+    pub(crate) fn new(prefix: PathBuf) -> Self {
         let work_root = prefix.join("tmp").join("build");
         Self { prefix, work_root }
     }
 
-    pub async fn execute(
+    pub(crate) async fn execute(
         &self,
         plan: &BuildPlan,
         formula_rb_path: &Path,
@@ -87,7 +87,7 @@ impl BuildExecutor {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct DepInfo {
+pub(crate) struct DepInfo {
     pub cellar_path: String,
 }
 

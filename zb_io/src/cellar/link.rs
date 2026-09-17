@@ -79,12 +79,11 @@ fn is_python_version_dir(name: &str) -> bool {
 
 pub struct Linker {
     prefix: PathBuf,
-    bin_dir: PathBuf,
     opt_dir: PathBuf,
 }
 
 #[derive(Debug, Clone)]
-pub struct LinkedFile {
+pub(crate) struct LinkedFile {
     pub link_path: PathBuf,
     pub target_path: PathBuf,
 }
@@ -249,14 +248,13 @@ impl Linker {
 
         Ok(Self {
             prefix: prefix.to_path_buf(),
-            bin_dir,
             opt_dir,
         })
     }
 
     /// Pre-flight check: scan all destinations for conflicts without creating any symlinks.
     /// Returns Ok(()) if no conflicts, or Err(LinkConflict) with all conflicts collected.
-    pub fn check_conflicts(&self, keg_path: &Path) -> Result<(), Error> {
+    pub(crate) fn check_conflicts(&self, keg_path: &Path) -> Result<(), Error> {
         let mut conflicts = Vec::new();
         for dir_name in LINK_DIRS {
             let src_dir = keg_path.join(dir_name);
@@ -415,7 +413,7 @@ impl Linker {
     /// (including a conflict the scan could not predict) rolls back every
     /// symlink and directory created so far and restores every symlink
     /// replaced, leaving the prefix exactly as it was.
-    pub fn link_keg(&self, keg_path: &Path) -> Result<Vec<LinkedFile>, Error> {
+    pub(crate) fn link_keg(&self, keg_path: &Path) -> Result<Vec<LinkedFile>, Error> {
         self.check_conflicts(keg_path)?;
         self.link_opt(keg_path)?;
 
@@ -544,7 +542,7 @@ impl Linker {
         Ok(linked)
     }
 
-    pub fn unlink_keg(&self, keg_path: &Path) -> Result<Vec<PathBuf>, Error> {
+    pub(crate) fn unlink_keg(&self, keg_path: &Path) -> Result<Vec<PathBuf>, Error> {
         self.unlink_opt(keg_path)?;
         let mut unlinked = Vec::new();
         for dir_name in LINK_DIRS {
@@ -557,7 +555,7 @@ impl Linker {
         Ok(unlinked)
     }
 
-    pub fn collect_linked_files(&self, keg_path: &Path) -> Result<Vec<LinkedFile>, Error> {
+    pub(crate) fn collect_linked_files(&self, keg_path: &Path) -> Result<Vec<LinkedFile>, Error> {
         let mut linked = Vec::new();
         for dir_name in LINK_DIRS {
             let src_dir = keg_path.join(dir_name);
@@ -662,7 +660,7 @@ impl Linker {
         Ok(())
     }
 
-    pub fn link_opt(&self, keg_path: &Path) -> Result<(), Error> {
+    pub(crate) fn link_opt(&self, keg_path: &Path) -> Result<(), Error> {
         let name = keg_path
             .parent()
             .and_then(|p| p.file_name())
@@ -688,29 +686,6 @@ impl Linker {
         std::os::unix::fs::symlink(keg_path, &opt_link)
             .map_err(Error::store("failed to create opt symlink"))?;
         Ok(())
-    }
-
-    pub fn is_linked(&self, keg_path: &Path) -> bool {
-        let keg_bin = keg_path.join("bin");
-        if !keg_bin.exists() {
-            return false;
-        }
-        if let Ok(entries) = fs::read_dir(&keg_bin) {
-            for entry in entries.flatten() {
-                let dst_path = self.bin_dir.join(entry.file_name());
-                if let Ok(target) = fs::read_link(&dst_path) {
-                    let resolved = if target.is_relative() {
-                        dst_path.parent().unwrap_or(Path::new("")).join(&target)
-                    } else {
-                        target
-                    };
-                    if fs::canonicalize(&resolved).ok() == fs::canonicalize(entry.path()).ok() {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
     }
 }
 

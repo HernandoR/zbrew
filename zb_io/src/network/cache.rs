@@ -1,7 +1,7 @@
 use rusqlite::{Connection, params};
 use std::path::Path;
 
-pub struct ApiCache {
+pub(crate) struct ApiCache {
     conn: Connection,
 }
 
@@ -12,7 +12,7 @@ impl std::fmt::Debug for ApiCache {
 }
 
 #[derive(Debug, Clone)]
-pub struct CacheEntry {
+pub(crate) struct CacheEntry {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
     pub body: String,
@@ -21,13 +21,14 @@ pub struct CacheEntry {
 impl ApiCache {
     const SCHEMA_VERSION: u32 = 1;
 
-    pub fn open(path: &Path) -> Result<Self, rusqlite::Error> {
+    pub(crate) fn open(path: &Path) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open(path)?;
         Self::migrate(&conn)?;
         Ok(Self { conn })
     }
 
-    pub fn in_memory() -> Result<Self, rusqlite::Error> {
+    #[cfg(test)]
+    pub(crate) fn in_memory() -> Result<Self, rusqlite::Error> {
         let conn = Connection::open_in_memory()?;
         Self::migrate(&conn)?;
         Ok(Self { conn })
@@ -84,7 +85,7 @@ impl ApiCache {
         Ok(())
     }
 
-    pub fn get(&self, url: &str) -> Option<CacheEntry> {
+    pub(crate) fn get(&self, url: &str) -> Option<CacheEntry> {
         self.conn
             .query_row(
                 "SELECT etag, last_modified, body FROM api_cache WHERE url = ?1",
@@ -101,12 +102,12 @@ impl ApiCache {
     }
 
     /// Clear all cached entries. Returns the number of entries removed.
-    pub fn clear(&self) -> Result<usize, rusqlite::Error> {
+    pub(crate) fn clear(&self) -> Result<usize, rusqlite::Error> {
         let removed = self.conn.execute("DELETE FROM api_cache", [])?;
         Ok(removed)
     }
 
-    pub fn put(&self, url: &str, entry: &CacheEntry) -> Result<(), rusqlite::Error> {
+    pub(crate) fn put(&self, url: &str, entry: &CacheEntry) -> Result<(), rusqlite::Error> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)

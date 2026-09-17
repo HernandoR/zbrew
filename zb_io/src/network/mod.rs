@@ -1,12 +1,8 @@
-pub mod api;
-pub mod cache;
-pub mod download;
-pub mod suggest;
-pub mod tap_formula;
+pub(crate) mod api;
+pub(crate) mod cache;
+pub(crate) mod download;
+pub(crate) mod suggest;
+pub(crate) mod tap_formula;
 pub(crate) mod tls;
 
 pub use api::ApiClient;
-pub use cache::{ApiCache, CacheEntry};
-pub use download::{
-    DownloadProgressCallback, DownloadRequest, DownloadResult, Downloader, ParallelDownloader,
-};

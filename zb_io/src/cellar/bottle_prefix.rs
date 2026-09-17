@@ -23,7 +23,10 @@ const PREFIX_DIRS: &[&str] = &["etc", "var"];
 /// with different contents is left alone and the bottle's version is written
 /// beside it as `<name>.default`, so an upgrade never discards a local edit.
 /// Returns the paths written, in the order they were written.
-pub fn install_bottle_prefix_files(keg_path: &Path, prefix: &Path) -> Result<Vec<PathBuf>, Error> {
+pub(crate) fn install_bottle_prefix_files(
+    keg_path: &Path,
+    prefix: &Path,
+) -> Result<Vec<PathBuf>, Error> {
     let staged = keg_path.join(BOTTLE_DIR);
     let mut installed = Vec::new();
 

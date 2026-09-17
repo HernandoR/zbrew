@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::progress::InstallProgress;
 
-pub type DownloadProgressCallback = Arc<dyn Fn(InstallProgress) + Send + Sync>;
+pub(crate) type DownloadProgressCallback = Arc<dyn Fn(InstallProgress) + Send + Sync>;
 
 const RACING_CONNECTIONS: usize = 3;
 const RACING_STAGGER_MS: u64 = 200;
@@ -31,12 +31,11 @@ const MAX_CONCURRENT_CHUNKS: usize = 6;
 const MAX_CHUNK_RETRIES: u32 = 3;
 
 #[derive(Debug, Clone)]
-pub struct DownloadResult {
-    pub name: String,
-    pub sha256: String,
+pub(crate) struct DownloadResult {
     pub blob_path: PathBuf,
+    /// Position of the originating request in the batch handed to
+    /// `download_streaming`, so the caller can pair a result with its item.
     pub index: usize,
 }
 
-pub use parallel::{DownloadRequest, ParallelDownloader};
-pub use single::Downloader;
+pub(crate) use parallel::{DownloadRequest, ParallelDownloader};
