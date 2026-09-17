@@ -8,6 +8,8 @@ pub mod path;
 pub mod progress;
 pub mod ssl;
 pub mod storage;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use build::{BuildExecutor, DepInfo};
 pub use cellar::{Cellar, LinkedFile, Linker, MaterializedKeg};

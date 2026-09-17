@@ -102,131 +102,72 @@ impl Installer {
 mod tests {
     use std::fs;
 
-    use tempfile::TempDir;
     use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use wiremock::{Mock, ResponseTemplate};
 
-    use crate::cellar::Cellar;
-    use crate::installer::install::test_support::*;
-    use crate::network::api::ApiClient;
-    use crate::storage::blob::BlobCache;
-    use crate::storage::db::Database;
-    use crate::storage::store::Store;
-    use crate::{Installer, Linker};
+    use crate::test_support::*;
 
-    fn formula_json(mock_uri: &str, name: &str, version: &str, tag: &str, sha: &str) -> String {
-        format!(
-            r#"{{
-                "name": "{name}",
-                "versions": {{ "stable": "{version}" }},
-                "dependencies": [],
-                "bottle": {{
-                    "stable": {{
-                        "files": {{
-                            "{tag}": {{
-                                "url": "{mock_uri}/bottles/{name}-{version}.{tag}.bottle.tar.gz",
-                                "sha256": "{sha}"
-                            }}
-                        }}
-                    }}
-                }}
-            }}"#
-        )
-    }
-
-    fn make_installer(
-        root: &std::path::Path,
-        prefix: &std::path::Path,
-        mock_uri: &str,
-    ) -> Installer {
-        fs::create_dir_all(root.join("db")).unwrap();
-        let api_client = ApiClient::with_base_url(format!("{mock_uri}/formula")).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(root).unwrap();
-        let cellar = Cellar::new(root).unwrap();
-        let linker = Linker::new(prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-        Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.to_path_buf(),
-            root.join("locks"),
-        )
+    /// Answer `name`'s formula endpoint with `version` exactly once, and serve
+    /// that version's bottle. Upgrades need two answers from one endpoint, so
+    /// the mocks are mounted one version at a time, newest last.
+    async fn mount_version_once(env: &TestEnv, name: &str, version: &str, bottle: Vec<u8>) {
+        let sha = sha256_hex(&bottle);
+        Mock::given(method("GET"))
+            .and(path(format!("/formula/{name}.json")))
+            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
+                name,
+                version,
+                &env.bottle_url(name, version),
+                &sha,
+            )))
+            .up_to_n_times(1)
+            .mount(&env.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(bottle_path(name, version)))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle))
+            .up_to_n_times(1)
+            .mount(&env.server)
+            .await;
     }
 
     #[tokio::test]
     async fn upgrade_replaces_old_version_and_cleans_up() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let tag = get_test_bottle_tag();
+        let env = TestEnv::new().await;
+        mount_version_once(
+            &env,
+            "testpkg",
+            "1.0.0",
+            create_bottle_tarball_with_version("testpkg", "1.0.0"),
+        )
+        .await;
+        env.mount_bottled_formula(
+            "testpkg",
+            "2.0.0",
+            create_bottle_tarball_with_version("testpkg", "2.0.0"),
+        )
+        .await;
 
-        let bottle_v1 = create_bottle_tarball_with_version("testpkg", "1.0.0");
-        let sha_v1 = sha256_hex(&bottle_v1);
-        let bottle_v2 = create_bottle_tarball_with_version("testpkg", "2.0.0");
-        let sha_v2 = sha256_hex(&bottle_v2);
-
-        Mock::given(method("GET"))
-            .and(path("/formula/testpkg.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                &mock_server.uri(),
-                "testpkg",
-                "1.0.0",
-                tag,
-                &sha_v1,
-            )))
-            .up_to_n_times(1)
-            .mount(&mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!("/bottles/testpkg-1.0.0.{tag}.bottle.tar.gz")))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle_v1))
-            .up_to_n_times(1)
-            .mount(&mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/formula/testpkg.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                &mock_server.uri(),
-                "testpkg",
-                "2.0.0",
-                tag,
-                &sha_v2,
-            )))
-            .mount(&mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!("/bottles/testpkg-2.0.0.{tag}.bottle.tar.gz")))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle_v2))
-            .mount(&mock_server)
-            .await;
-
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        let mut installer = make_installer(&root, &prefix, &mock_server.uri());
-
+        let mut installer = env.installer();
         installer
             .install(&["testpkg".to_string()], true)
             .await
             .unwrap();
-        assert!(root.join("cellar/testpkg/1.0.0").exists());
-        assert!(prefix.join("bin/testpkg").exists());
+        assert!(env.root.join("cellar/testpkg/1.0.0").exists());
+        assert!(env.prefix.join("bin/testpkg").exists());
 
         installer
             .upgrade("testpkg", false, true, None)
             .await
             .unwrap();
 
-        assert!(root.join("cellar/testpkg/2.0.0").exists());
+        assert!(env.root.join("cellar/testpkg/2.0.0").exists());
         assert!(
-            !root.join("cellar/testpkg/1.0.0").exists(),
+            !env.root.join("cellar/testpkg/1.0.0").exists(),
             "old cellar dir must be removed"
         );
 
-        let bin_link = prefix.join("bin/testpkg");
+        let bin_link = env.prefix.join("bin/testpkg");
         assert!(bin_link.exists(), "new version must be linked");
         let target = fs::read_link(&bin_link).unwrap();
         let target_str = target.to_string_lossy();
@@ -250,63 +191,27 @@ mod tests {
         // the link step with conflicts "belonging to" the package itself,
         // leaving the DB reporting the new version while bin/<pkg> kept
         // resolving to the old keg.
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let tag = get_test_bottle_tag();
+        let env = TestEnv::new().await;
+        mount_version_once(
+            &env,
+            "relinkpkg",
+            "1.0.0",
+            create_bottle_tarball_with_version("relinkpkg", "1.0.0"),
+        )
+        .await;
+        env.mount_bottled_formula(
+            "relinkpkg",
+            "2.0.0",
+            create_bottle_tarball_with_version("relinkpkg", "2.0.0"),
+        )
+        .await;
 
-        let bottle_v1 = create_bottle_tarball_with_version("relinkpkg", "1.0.0");
-        let sha_v1 = sha256_hex(&bottle_v1);
-        let bottle_v2 = create_bottle_tarball_with_version("relinkpkg", "2.0.0");
-        let sha_v2 = sha256_hex(&bottle_v2);
-
-        Mock::given(method("GET"))
-            .and(path("/formula/relinkpkg.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                &mock_server.uri(),
-                "relinkpkg",
-                "1.0.0",
-                tag,
-                &sha_v1,
-            )))
-            .up_to_n_times(1)
-            .mount(&mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/bottles/relinkpkg-1.0.0.{tag}.bottle.tar.gz"
-            )))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle_v1))
-            .up_to_n_times(1)
-            .mount(&mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/formula/relinkpkg.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                &mock_server.uri(),
-                "relinkpkg",
-                "2.0.0",
-                tag,
-                &sha_v2,
-            )))
-            .mount(&mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/bottles/relinkpkg-2.0.0.{tag}.bottle.tar.gz"
-            )))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle_v2))
-            .mount(&mock_server)
-            .await;
-
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        let mut installer = make_installer(&root, &prefix, &mock_server.uri());
-
+        let mut installer = env.installer();
         installer
             .install(&["relinkpkg".to_string()], true)
             .await
             .unwrap();
-        let bin_link = prefix.join("bin/relinkpkg");
+        let bin_link = env.prefix.join("bin/relinkpkg");
         assert!(
             fs::read_link(&bin_link)
                 .unwrap()
@@ -327,7 +232,7 @@ mod tests {
         );
         assert!(bin_link.exists(), "bin symlink must not be dangling");
 
-        let opt_target = fs::read_link(prefix.join("opt/relinkpkg")).unwrap();
+        let opt_target = fs::read_link(env.prefix.join("opt/relinkpkg")).unwrap();
         assert!(opt_target.to_string_lossy().contains("2.0.0"));
 
         let installed = installer.get_installed("relinkpkg").unwrap();
@@ -336,110 +241,65 @@ mod tests {
 
     #[tokio::test]
     async fn upgrade_with_no_link_does_not_create_symlinks() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let tag = get_test_bottle_tag();
+        let env = TestEnv::new().await;
+        mount_version_once(
+            &env,
+            "nolinkpkg",
+            "1.0.0",
+            create_bottle_tarball_with_version("nolinkpkg", "1.0.0"),
+        )
+        .await;
+        env.mount_bottled_formula(
+            "nolinkpkg",
+            "2.0.0",
+            create_bottle_tarball_with_version("nolinkpkg", "2.0.0"),
+        )
+        .await;
 
-        let bottle_v1 = create_bottle_tarball_with_version("nolinkpkg", "1.0.0");
-        let sha_v1 = sha256_hex(&bottle_v1);
-        let bottle_v2 = create_bottle_tarball_with_version("nolinkpkg", "2.0.0");
-        let sha_v2 = sha256_hex(&bottle_v2);
-
-        Mock::given(method("GET"))
-            .and(path("/formula/nolinkpkg.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                &mock_server.uri(),
-                "nolinkpkg",
-                "1.0.0",
-                tag,
-                &sha_v1,
-            )))
-            .up_to_n_times(1)
-            .mount(&mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/bottles/nolinkpkg-1.0.0.{tag}.bottle.tar.gz"
-            )))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle_v1))
-            .up_to_n_times(1)
-            .mount(&mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/formula/nolinkpkg.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                &mock_server.uri(),
-                "nolinkpkg",
-                "2.0.0",
-                tag,
-                &sha_v2,
-            )))
-            .mount(&mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/bottles/nolinkpkg-2.0.0.{tag}.bottle.tar.gz"
-            )))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle_v2))
-            .mount(&mock_server)
-            .await;
-
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        let mut installer = make_installer(&root, &prefix, &mock_server.uri());
-
+        let mut installer = env.installer();
         installer
             .install(&["nolinkpkg".to_string()], true)
             .await
             .unwrap();
-        assert!(prefix.join("bin/nolinkpkg").exists());
+        assert!(env.prefix.join("bin/nolinkpkg").exists());
 
         installer
             .upgrade("nolinkpkg", false, false, None)
             .await
             .unwrap();
 
-        assert!(root.join("cellar/nolinkpkg/2.0.0").exists());
-        assert!(!root.join("cellar/nolinkpkg/1.0.0").exists());
+        assert!(env.root.join("cellar/nolinkpkg/2.0.0").exists());
+        assert!(!env.root.join("cellar/nolinkpkg/1.0.0").exists());
         assert!(
-            !prefix.join("bin/nolinkpkg").exists(),
+            !env.prefix.join("bin/nolinkpkg").exists(),
             "no symlinks expected when link=false"
         );
     }
 
     #[tokio::test]
     async fn upgrade_no_op_when_already_latest() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let tag = get_test_bottle_tag();
-
+        let env = TestEnv::new().await;
         let bottle = create_bottle_tarball("steadypkg");
         let sha = sha256_hex(&bottle);
 
-        Mock::given(method("GET"))
-            .and(path("/formula/steadypkg.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                &mock_server.uri(),
+        env.mount_formula(
+            "steadypkg",
+            formula_json(
                 "steadypkg",
                 "1.0.0",
-                tag,
+                &env.bottle_url("steadypkg", "1.0.0"),
                 &sha,
-            )))
-            .mount(&mock_server)
-            .await;
+            ),
+        )
+        .await;
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/bottles/steadypkg-1.0.0.{tag}.bottle.tar.gz"
-            )))
+            .and(path(bottle_path("steadypkg", "1.0.0")))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle))
             .up_to_n_times(1)
-            .mount(&mock_server)
+            .mount(&env.server)
             .await;
 
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        let mut installer = make_installer(&root, &prefix, &mock_server.uri());
-
+        let mut installer = env.installer();
         installer
             .install(&["steadypkg".to_string()], true)
             .await
@@ -450,8 +310,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(root.join("cellar/steadypkg/1.0.0").exists());
-        assert!(prefix.join("bin/steadypkg").exists());
+        assert!(env.root.join("cellar/steadypkg/1.0.0").exists());
+        assert!(env.prefix.join("bin/steadypkg").exists());
         assert_eq!(
             installer.get_installed("steadypkg").unwrap().version,
             "1.0.0"
@@ -460,11 +320,8 @@ mod tests {
 
     #[tokio::test]
     async fn upgrade_errors_when_not_installed() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        let mut installer = make_installer(&root, &prefix, &mock_server.uri());
+        let env = TestEnv::new().await;
+        let mut installer = env.installer();
 
         let err = installer
             .upgrade("nonexistent", false, true, None)
@@ -475,72 +332,45 @@ mod tests {
 
     #[tokio::test]
     async fn upgrade_keeps_old_version_when_new_bottle_download_fails() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let tag = get_test_bottle_tag();
-
-        let bottle = create_bottle_tarball("flakypkg");
-        let sha = sha256_hex(&bottle);
-
-        Mock::given(method("GET"))
-            .and(path("/formula/flakypkg.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                &mock_server.uri(),
-                "flakypkg",
-                "1.0.0",
-                tag,
-                &sha,
-            )))
-            .up_to_n_times(1)
-            .mount(&mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!("/bottles/flakypkg-1.0.0.{tag}.bottle.tar.gz")))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle))
-            .up_to_n_times(1)
-            .mount(&mock_server)
-            .await;
+        let env = TestEnv::new().await;
+        mount_version_once(&env, "flakypkg", "1.0.0", create_bottle_tarball("flakypkg")).await;
 
         // Plan resolves to 2.0.0 with a valid sha, but the bottle download
         // returns 500 — exercise the pre-fetch failure path.
-        Mock::given(method("GET"))
-            .and(path("/formula/flakypkg.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                &mock_server.uri(),
+        env.mount_formula(
+            "flakypkg",
+            formula_json(
                 "flakypkg",
                 "2.0.0",
-                tag,
+                &env.bottle_url("flakypkg", "2.0.0"),
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            )))
-            .mount(&mock_server)
-            .await;
+            ),
+        )
+        .await;
         Mock::given(method("GET"))
-            .and(path(format!("/bottles/flakypkg-2.0.0.{tag}.bottle.tar.gz")))
+            .and(path(bottle_path("flakypkg", "2.0.0")))
             .respond_with(ResponseTemplate::new(500).set_body_string("download failed"))
-            .mount(&mock_server)
+            .mount(&env.server)
             .await;
 
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        let mut installer = make_installer(&root, &prefix, &mock_server.uri());
-
+        let mut installer = env.installer();
         installer
             .install(&["flakypkg".to_string()], true)
             .await
             .unwrap();
-        assert!(root.join("cellar/flakypkg/1.0.0").exists());
-        let bin_link = prefix.join("bin/flakypkg");
+        assert!(env.root.join("cellar/flakypkg/1.0.0").exists());
+        let bin_link = env.prefix.join("bin/flakypkg");
         assert!(bin_link.exists());
 
         let result = installer.upgrade("flakypkg", false, true, None).await;
         assert!(result.is_err(), "upgrade should fail when bottle 500s");
 
         assert!(
-            root.join("cellar/flakypkg/1.0.0").exists(),
+            env.root.join("cellar/flakypkg/1.0.0").exists(),
             "old cellar dir must be preserved on download failure"
         );
         assert!(
-            !root.join("cellar/flakypkg/2.0.0").exists(),
+            !env.root.join("cellar/flakypkg/2.0.0").exists(),
             "no partial new cellar should exist"
         );
         assert!(bin_link.exists(), "symlink to old version must remain");
