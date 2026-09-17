@@ -471,7 +471,7 @@ fn rpaths_from_load_commands(listing: &str) -> Vec<String> {
 /// Also fixes version mismatches where a bottle references a different version of itself.
 /// Additionally patches hardcoded Homebrew paths in binary data sections and text files.
 /// Uses rayon for parallel processing.
-pub fn patch_homebrew_placeholders(
+pub(crate) fn patch_homebrew_placeholders(
     keg_path: &Path,
     cellar_dir: &Path,
     pkg_name: &str,
@@ -662,7 +662,7 @@ pub fn patch_homebrew_placeholders(
 /// Strip quarantine extended attributes and ad-hoc sign unsigned Mach-O binaries.
 /// Homebrew bottles from ghcr.io are already adhoc signed, so this is mostly a no-op.
 /// We use a fast heuristic: only process binaries that fail signature verification.
-pub fn codesign_and_strip_xattrs(keg_path: &Path) -> Result<(), Error> {
+pub(crate) fn codesign_and_strip_xattrs(keg_path: &Path) -> Result<(), Error> {
     use rayon::prelude::*;
 
     // First, do a quick recursive xattr strip (single command, very fast)

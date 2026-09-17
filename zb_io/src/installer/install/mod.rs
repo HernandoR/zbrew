@@ -1,5 +1,5 @@
 mod bottle;
-pub mod doctor;
+pub(crate) mod doctor;
 mod outdated;
 mod plan;
 mod source;

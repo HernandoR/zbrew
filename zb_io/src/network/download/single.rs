@@ -51,7 +51,7 @@ fn transform_url_to_mirror(url: &str, mirror_domain: &str) -> Option<String> {
     }
 }
 
-pub struct Downloader {
+pub(crate) struct Downloader {
     client: reqwest::Client,
     pub(crate) blob_cache: BlobCache,
     pub(crate) token_cache: TokenCache,
@@ -60,11 +60,7 @@ pub struct Downloader {
 }
 
 impl Downloader {
-    pub fn new(blob_cache: BlobCache) -> Self {
-        Self::with_semaphore(blob_cache, None)
-    }
-
-    pub fn with_semaphore(blob_cache: BlobCache, semaphore: Option<Arc<Semaphore>>) -> Self {
+    pub(crate) fn with_semaphore(blob_cache: BlobCache, semaphore: Option<Arc<Semaphore>>) -> Self {
         let tls_config = shared_tls_config();
 
         let client = reqwest::Client::builder()
@@ -106,16 +102,11 @@ impl Downloader {
             .expect("failed to build isolated HTTP client")
     }
 
-    pub fn remove_blob(&self, sha256: &str) -> bool {
+    pub(crate) fn remove_blob(&self, sha256: &str) -> bool {
         self.blob_cache.remove_blob(sha256).unwrap_or(false)
     }
 
-    pub async fn download(&self, url: &str, expected_sha256: &str) -> Result<PathBuf, Error> {
-        self.download_with_progress(url, expected_sha256, None, None)
-            .await
-    }
-
-    pub async fn download_with_progress(
+    pub(crate) async fn download_with_progress(
         &self,
         url: &str,
         expected_sha256: &str,
@@ -438,10 +429,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}/test.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, sha256).await;
+        let result = downloader
+            .download_with_progress(&url, sha256, None, None)
+            .await;
 
         assert!(result.is_ok());
         let blob_path = result.unwrap();
@@ -463,10 +456,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}/test.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, wrong_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, wrong_sha256, None, None)
+            .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -505,9 +500,11 @@ mod tests {
         writer.write_all(content).unwrap();
         writer.commit().unwrap();
 
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
         let url = format!("{}/test.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, sha256).await;
+        let result = downloader
+            .download_with_progress(&url, sha256, None, None)
+            .await;
 
         assert!(result.is_ok());
     }

@@ -128,24 +128,24 @@ impl ApiClient {
     }
 
     #[cfg(test)]
-    pub fn with_tap_raw_base_url(mut self, tap_raw_base_url: String) -> Self {
+    pub(crate) fn with_tap_raw_base_url(mut self, tap_raw_base_url: String) -> Self {
         self.tap_raw_base_url = tap_raw_base_url;
         self
     }
 
     #[cfg(test)]
-    pub fn with_cask_base_url(mut self, cask_base_url: String) -> Self {
+    pub(crate) fn with_cask_base_url(mut self, cask_base_url: String) -> Self {
         self.cask_base_url = cask_base_url;
         self
     }
 
-    pub fn with_cache(mut self, cache: ApiCache) -> Self {
+    pub(crate) fn with_cache(mut self, cache: ApiCache) -> Self {
         self.cache = Some(cache);
         self
     }
 
     /// Clear all cached API responses. Returns the number removed.
-    pub fn clear_cache(&self) -> Result<usize, Error> {
+    pub(crate) fn clear_cache(&self) -> Result<usize, Error> {
         match &self.cache {
             Some(cache) => cache
                 .clear()
@@ -154,7 +154,7 @@ impl ApiClient {
         }
     }
 
-    pub async fn fetch_formula_rb(
+    pub(crate) async fn fetch_formula_rb(
         &self,
         ruby_source_path: &str,
         cache_dir: &std::path::Path,
@@ -348,7 +348,7 @@ impl ApiClient {
         }
     }
 
-    pub async fn get_all_formulas_raw(&self) -> Result<String, Error> {
+    pub(crate) async fn get_all_formulas_raw(&self) -> Result<String, Error> {
         let url = format!("{}.json", self.base_url);
 
         match self.cached_get(&url).await? {
@@ -382,7 +382,11 @@ impl ApiClient {
         }
     }
 
-    pub async fn suggest_formulas(&self, query: &str, limit: usize) -> Result<Vec<String>, Error> {
+    pub(crate) async fn suggest_formulas(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, Error> {
         if limit == 0 || query.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -483,7 +487,7 @@ impl ApiClient {
         Ok(map)
     }
 
-    pub async fn get_cask(&self, token: &str) -> Result<serde_json::Value, Error> {
+    pub(crate) async fn get_cask(&self, token: &str) -> Result<serde_json::Value, Error> {
         let url = format!("{}/{}.json", self.cask_base_url, token);
         let response = self
             .client

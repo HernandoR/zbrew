@@ -10,7 +10,11 @@ struct CandidateScore {
     len_delta: usize,
 }
 
-pub fn rank_formula_suggestions(query: &str, candidates: &[String], limit: usize) -> Vec<String> {
+pub(crate) fn rank_formula_suggestions(
+    query: &str,
+    candidates: &[String],
+    limit: usize,
+) -> Vec<String> {
     rank_formula_suggestions_with(query, candidates, limit, damerau_levenshtein)
 }
 

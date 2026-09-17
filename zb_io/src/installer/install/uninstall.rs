@@ -30,7 +30,7 @@ impl Installer {
         self.uninstall_by_version(name, &installed.version)
     }
 
-    pub fn uninstall_by_version(&mut self, name: &str, version: &str) -> Result<(), Error> {
+    pub(crate) fn uninstall_by_version(&mut self, name: &str, version: &str) -> Result<(), Error> {
         let keg_name = formula_token(name);
 
         let keg_path = self.cellar.keg_path(keg_name, version);

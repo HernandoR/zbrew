@@ -535,10 +535,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}/large.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, &actual_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, &actual_sha256, None, None)
+            .await;
 
         assert!(result.is_ok(), "Download failed: {:?}", result.err());
         let blob_path = result.unwrap();
@@ -604,10 +606,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}/large.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, &wrong_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, &wrong_sha256, None, None)
+            .await;
 
         assert!(
             result.is_err(),
@@ -650,10 +654,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}/large.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, &actual_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, &actual_sha256, None, None)
+            .await;
 
         assert!(result.is_ok());
         let blob_path = result.unwrap();
@@ -701,10 +707,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}/small.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, &actual_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, &actual_sha256, None, None)
+            .await;
 
         assert!(result.is_ok());
         let blob_path = result.unwrap();
@@ -787,10 +795,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}/large.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, &actual_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, &actual_sha256, None, None)
+            .await;
 
         assert!(result.is_ok(), "Download failed: {:?}", result.err());
         let blob_path = result.unwrap();
@@ -870,10 +880,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}/large.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, &actual_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, &actual_sha256, None, None)
+            .await;
 
         assert!(result.is_ok(), "Download should succeed after retry");
         let blob_path = result.unwrap();
@@ -965,13 +977,15 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!(
             "{}/v2/homebrew/core/test/blobs/sha256:abc",
             mock_server.uri()
         );
-        let result = downloader.download(&url, &actual_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, &actual_sha256, None, None)
+            .await;
 
         assert!(result.is_ok(), "Download should succeed after auth refresh");
         let blob_path = result.unwrap();
@@ -1039,10 +1053,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}/large.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, &actual_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, &actual_sha256, None, None)
+            .await;
 
         assert!(
             result.is_ok(),
@@ -1121,10 +1137,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let blob_cache = BlobCache::new(tmp.path()).unwrap();
-        let downloader = Downloader::new(blob_cache);
+        let downloader = Downloader::with_semaphore(blob_cache, None);
 
         let url = format!("{}/large.tar.gz", mock_server.uri());
-        let result = downloader.download(&url, &actual_sha256).await;
+        let result = downloader
+            .download_with_progress(&url, &actual_sha256, None, None)
+            .await;
 
         assert!(
             result.is_ok(),

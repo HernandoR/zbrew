@@ -1,4 +1,4 @@
-pub mod extract;
-pub mod patch;
+pub(crate) mod extract;
+pub(crate) mod patch;
 
-pub use extract::{extract_archive, extract_tarball, extract_tarball_from_reader, is_archive};
+pub(crate) use extract::{extract_tarball, is_archive};

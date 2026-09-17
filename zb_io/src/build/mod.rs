@@ -1,5 +1,5 @@
-pub mod environment;
-pub mod executor;
-pub mod source;
+pub(crate) mod environment;
+pub(crate) mod executor;
+pub(crate) mod source;
 
-pub use executor::{BuildExecutor, DepInfo};
+pub(crate) use executor::{BuildExecutor, DepInfo};

@@ -2,7 +2,7 @@ use sha2::{Digest, Sha256};
 use zb_core::Error;
 
 /// Format a SHA-256 digest as a lowercase hex string.
-pub fn sha256_hex(hasher: Sha256) -> String {
+pub(crate) fn sha256_hex(hasher: Sha256) -> String {
     hasher
         .finalize()
         .iter()
@@ -18,7 +18,10 @@ pub fn sha256_hex(hasher: Sha256) -> String {
 /// When `expected_sha256` is `None` the check is skipped (caller opted out).
 /// When `Some`, the value must be a 64-character hex string; mismatches and
 /// malformed expectations are returned as typed errors.
-pub fn verify_sha256_bytes(bytes: &[u8], expected_sha256: Option<&str>) -> Result<(), Error> {
+pub(crate) fn verify_sha256_bytes(
+    bytes: &[u8],
+    expected_sha256: Option<&str>,
+) -> Result<(), Error> {
     let Some(expected_sha256) = expected_sha256 else {
         return Ok(());
     };

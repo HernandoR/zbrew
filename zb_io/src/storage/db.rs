@@ -28,7 +28,7 @@ impl InstallReason {
     const RETAINED: &'static str = "retained";
     const TRANSIENT: &'static str = "transient";
 
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Retained => Self::RETAINED,
             Self::Transient => Self::TRANSIENT,
@@ -60,13 +60,13 @@ pub struct InstalledKeg {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoreRef {
+pub(crate) struct StoreRef {
     pub store_key: String,
     pub refcount: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KegFileRecord {
+pub(crate) struct KegFileRecord {
     pub name: String,
     pub version: String,
     pub linked_path: String,
@@ -93,7 +93,8 @@ impl Database {
         Ok(Self { conn })
     }
 
-    pub fn in_memory() -> Result<Self, Error> {
+    #[cfg(test)]
+    pub(crate) fn in_memory() -> Result<Self, Error> {
         let conn =
             Connection::open_in_memory().map_err(Error::store("failed to open in-memory db"))?;
         Self::migrate(&conn)?;
@@ -229,7 +230,7 @@ impl Database {
         Ok(found)
     }
 
-    pub fn transaction(&mut self) -> Result<InstallTransaction<'_>, Error> {
+    pub(crate) fn transaction(&mut self) -> Result<InstallTransaction<'_>, Error> {
         let tx = self
             .conn
             .transaction()
@@ -238,7 +239,7 @@ impl Database {
         Ok(InstallTransaction { tx })
     }
 
-    pub fn get_installed(&self, name: &str) -> Option<InstalledKeg> {
+    pub(crate) fn get_installed(&self, name: &str) -> Option<InstalledKeg> {
         self.conn
             .query_row(
                 "SELECT name, version, store_key, installed_at, install_reason
@@ -252,7 +253,7 @@ impl Database {
     /// Every registered keg, transient ones included. Callers that report to
     /// the user filter on [`InstalledKeg::reason`]; callers that reason about
     /// what is on disk (doctor, `uninstall --all`, gc) must not.
-    pub fn list_installed(&self) -> Result<Vec<InstalledKeg>, Error> {
+    pub(crate) fn list_installed(&self) -> Result<Vec<InstalledKeg>, Error> {
         let mut stmt = self
             .conn
             .prepare(
@@ -270,7 +271,8 @@ impl Database {
         Ok(kegs)
     }
 
-    pub fn get_store_refcount(&self, store_key: &str) -> i64 {
+    #[cfg(test)]
+    pub(crate) fn get_store_refcount(&self, store_key: &str) -> i64 {
         self.conn
             .query_row(
                 "SELECT refcount FROM store_refs WHERE store_key = ?1",
@@ -280,7 +282,7 @@ impl Database {
             .unwrap_or(0)
     }
 
-    pub fn get_unreferenced_store_keys(&self) -> Result<Vec<String>, Error> {
+    pub(crate) fn get_unreferenced_store_keys(&self) -> Result<Vec<String>, Error> {
         let mut stmt = self
             .conn
             .prepare("SELECT store_key FROM store_refs WHERE refcount <= 0")
@@ -295,7 +297,7 @@ impl Database {
         Ok(keys)
     }
 
-    pub fn delete_store_ref(&self, store_key: &str) -> Result<(), Error> {
+    pub(crate) fn delete_store_ref(&self, store_key: &str) -> Result<(), Error> {
         self.conn
             .execute(
                 "DELETE FROM store_refs WHERE store_key = ?1",
@@ -305,7 +307,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn list_store_refs(&self) -> Result<Vec<StoreRef>, Error> {
+    pub(crate) fn list_store_refs(&self) -> Result<Vec<StoreRef>, Error> {
         let mut stmt = self
             .conn
             .prepare("SELECT store_key, refcount FROM store_refs ORDER BY store_key")
@@ -325,7 +327,7 @@ impl Database {
         Ok(refs)
     }
 
-    pub fn list_keg_files(&self) -> Result<Vec<KegFileRecord>, Error> {
+    pub(crate) fn list_keg_files(&self) -> Result<Vec<KegFileRecord>, Error> {
         let mut stmt = self
             .conn
             .prepare(
@@ -351,7 +353,7 @@ impl Database {
         Ok(records)
     }
 
-    pub fn replace_store_refs(&self, store_refs: &[StoreRef]) -> Result<(), Error> {
+    pub(crate) fn replace_store_refs(&self, store_refs: &[StoreRef]) -> Result<(), Error> {
         let tx = self
             .conn
             .unchecked_transaction()
@@ -375,7 +377,7 @@ impl Database {
             .map_err(Error::store("failed to commit transaction"))
     }
 
-    pub fn count_stale_keg_file_records(&self) -> Result<usize, Error> {
+    pub(crate) fn count_stale_keg_file_records(&self) -> Result<usize, Error> {
         let count: i64 = self
             .conn
             .query_row(
@@ -393,7 +395,7 @@ impl Database {
         Ok(count as usize)
     }
 
-    pub fn prune_stale_keg_file_records(&self) -> Result<usize, Error> {
+    pub(crate) fn prune_stale_keg_file_records(&self) -> Result<usize, Error> {
         self.conn
             .execute(
                 "DELETE FROM keg_files
@@ -409,7 +411,7 @@ impl Database {
     }
 }
 
-pub struct InstallTransaction<'a> {
+pub(crate) struct InstallTransaction<'a> {
     tx: Transaction<'a>,
 }
 
@@ -423,7 +425,7 @@ impl<'a> InstallTransaction<'a> {
     /// a previous `zbx` left behind is promoted the moment something the user
     /// wants to keep needs it -- which is what makes it safe for `zb gc` to
     /// delete transient kegs outright.
-    pub fn record_install(
+    pub(crate) fn record_install(
         &self,
         name: &str,
         version: &str,
@@ -493,7 +495,7 @@ impl<'a> InstallTransaction<'a> {
         Ok(())
     }
 
-    pub fn record_linked_file(
+    pub(crate) fn record_linked_file(
         &self,
         name: &str,
         version: &str,
@@ -511,7 +513,7 @@ impl<'a> InstallTransaction<'a> {
         Ok(())
     }
 
-    pub fn record_uninstall(&self, name: &str) -> Result<Option<String>, Error> {
+    pub(crate) fn record_uninstall(&self, name: &str) -> Result<Option<String>, Error> {
         // Get the store_key before removing
         let store_key: Option<String> = self
             .tx
@@ -544,7 +546,7 @@ impl<'a> InstallTransaction<'a> {
         Ok(store_key)
     }
 
-    pub fn delete_installed_record(&self, name: &str) -> Result<(), Error> {
+    pub(crate) fn delete_installed_record(&self, name: &str) -> Result<(), Error> {
         self.tx
             .execute("DELETE FROM installed_kegs WHERE name = ?1", params![name])
             .map_err(Error::store("failed to remove install record"))?;
@@ -552,7 +554,7 @@ impl<'a> InstallTransaction<'a> {
         self.clear_keg_file_records(name)
     }
 
-    pub fn clear_keg_file_records(&self, name: &str) -> Result<(), Error> {
+    pub(crate) fn clear_keg_file_records(&self, name: &str) -> Result<(), Error> {
         self.tx
             .execute("DELETE FROM keg_files WHERE name = ?1", params![name])
             .map_err(Error::store("failed to clear keg files records"))?;
@@ -560,7 +562,7 @@ impl<'a> InstallTransaction<'a> {
         Ok(())
     }
 
-    pub fn commit(self) -> Result<(), Error> {
+    pub(crate) fn commit(self) -> Result<(), Error> {
         self.tx
             .commit()
             .map_err(Error::store("failed to commit transaction"))

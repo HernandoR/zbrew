@@ -184,10 +184,7 @@ mod tests {
     use tempfile::TempDir;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    use zb_io::cellar::Cellar;
-    use zb_io::network::ApiClient;
-    use zb_io::storage::{BlobCache, Database, Store};
-    use zb_io::{Installer, Linker};
+    use zb_io::{ApiClient, BlobCache, Cellar, Database, Installer, Linker, Store};
 
     use super::{
         format_formula_suggestions, get_prefix_path_for_os, normalize_formula_name,

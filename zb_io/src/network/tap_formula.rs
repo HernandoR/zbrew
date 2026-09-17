@@ -7,7 +7,7 @@ use zb_core::formula::{
 use zb_core::{Error, Formula};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TapFormulaRef {
+pub(crate) struct TapFormulaRef {
     pub owner: String,
     pub repo: String,
     pub formula: String,
@@ -70,7 +70,7 @@ static ELSIF_HW_CPU_RE: LazyLock<Regex> = LazyLock::new(|| {
 static ELSE_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"^\s*else\s*(?:#.*)?$"#).expect("ELSE_LINE_RE must compile"));
 
-pub fn parse_tap_formula_ref(input: &str) -> Option<TapFormulaRef> {
+pub(crate) fn parse_tap_formula_ref(input: &str) -> Option<TapFormulaRef> {
     let mut parts = input.split('/');
     let owner = parts.next()?;
     let repo = parts.next()?;
@@ -337,7 +337,7 @@ fn resolve_version_interpolation(source: &str) -> String {
     }
 }
 
-pub fn parse_tap_formula_ruby(spec: &TapFormulaRef, source: &str) -> Result<Formula, Error> {
+pub(crate) fn parse_tap_formula_ruby(spec: &TapFormulaRef, source: &str) -> Result<Formula, Error> {
     let source = preprocess_tap_source(source);
     let stable = parse_version(&source).unwrap_or_else(|| "0".to_string());
     let revision = parse_revision(&source).unwrap_or(0);

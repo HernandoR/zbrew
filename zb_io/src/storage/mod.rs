@@ -1,7 +1,7 @@
-pub mod blob;
-pub mod db;
-pub mod store;
+pub(crate) mod blob;
+pub(crate) mod db;
+pub(crate) mod store;
 
-pub use blob::{BlobCache, BlobWriter};
-pub use db::{Database, InstallReason, InstallTransaction, InstalledKeg, KegFileRecord, StoreRef};
+pub use blob::BlobCache;
+pub use db::{Database, InstallReason, InstalledKeg};
 pub use store::Store;
