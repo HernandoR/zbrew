@@ -308,100 +308,30 @@ fn root_dependency_failure(
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
-    use tempfile::TempDir;
     use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use wiremock::{Mock, ResponseTemplate};
 
-    use crate::cellar::Cellar;
-    use crate::installer::install::test_support::*;
-    use crate::network::api::ApiClient;
-    use crate::storage::blob::BlobCache;
-    use crate::storage::db::Database;
-    use crate::storage::store::Store;
-    use crate::{Installer, Linker};
+    use crate::test_support::*;
 
     #[tokio::test]
     async fn plans_tapped_formula_with_core_dependency() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-
-        let dep_bottle = create_bottle_tarball("go");
-        let dep_sha = sha256_hex(&dep_bottle);
-        let tag = get_test_bottle_tag();
-        let dep_json = format!(
-            r#"{{
-                "name": "go",
-                "versions": {{ "stable": "1.24.0" }},
-                "dependencies": [],
-                "bottle": {{
-                    "stable": {{
-                        "files": {{
-                            "{}": {{
-                                "url": "{}/bottles/go-1.24.0.{}.bottle.tar.gz",
-                                "sha256": "{}"
-                            }}
-                        }}
-                    }}
-                }}
-            }}"#,
-            tag,
-            mock_server.uri(),
-            tag,
-            dep_sha
-        );
-
-        Mock::given(method("GET"))
-            .and(path("/formula/go.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(&dep_json))
-            .mount(&mock_server)
+        let env = TestEnv::new().await;
+        env.mount_bottled_formula("go", "1.24.0", create_bottle_tarball("go"))
             .await;
-
-        let tap_formula_rb = format!(
-            r#"
-class Terraform < Formula
-  version "1.10.0"
-  depends_on "go"
-  bottle do
-    root_url "{}/ghcr/hashicorp/tap"
-    sha256 {}: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  end
-end
-"#,
-            mock_server.uri(),
-            tag
-        );
 
         Mock::given(method("GET"))
             .and(path("/hashicorp/homebrew-tap/main/Formula/terraform.rb"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(tap_formula_rb))
-            .mount(&mock_server)
+            .respond_with(ResponseTemplate::new(200).set_body_string(tap_formula_rb(
+                "Terraform",
+                "1.10.0",
+                &format!("{}/ghcr/hashicorp/tap", env.uri()),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                &["go"],
+            )))
+            .mount(&env.server)
             .await;
 
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client = ApiClient::with_base_url(format!("{}/formula", mock_server.uri()))
-            .unwrap()
-            .with_tap_raw_base_url(mock_server.uri());
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.to_path_buf(),
-            root.join("locks"),
-        );
+        let installer = env.installer_with_taps();
         let plan = installer
             .plan(&["hashicorp/tap/terraform".to_string()])
             .await
@@ -418,10 +348,10 @@ end
 
     #[tokio::test]
     async fn falls_back_to_source_when_no_bottle() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-
-        let formula_json = r#"{
+        let env = TestEnv::new().await;
+        env.mount_formula(
+            "nobottle",
+            r#"{
             "name": "nobottle",
             "versions": { "stable": "1.0.0" },
             "dependencies": [],
@@ -434,37 +364,11 @@ end
             },
             "ruby_source_path": "Formula/n/nobottle.rb",
             "bottle": { "stable": { "files": {} } }
-        }"#;
+        }"#,
+        )
+        .await;
 
-        Mock::given(method("GET"))
-            .and(path("/formula/nobottle.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json))
-            .mount(&mock_server)
-            .await;
-
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.clone(),
-            root.join("locks"),
-        );
-
+        let installer = env.installer();
         let plan = installer.plan(&["nobottle".to_string()]).await.unwrap();
 
         assert_eq!(plan.items.len(), 1);
@@ -483,12 +387,12 @@ end
 
     #[tokio::test]
     async fn prefers_bottle_over_source() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-
+        let env = TestEnv::new().await;
         let tag = get_test_bottle_tag();
-        let formula_json = format!(
-            r#"{{
+        env.mount_formula(
+            "hasboth",
+            format!(
+                r#"{{
                 "name": "hasboth",
                 "versions": {{ "stable": "2.0.0" }},
                 "dependencies": [],
@@ -502,46 +406,19 @@ end
                 "bottle": {{
                     "stable": {{
                         "files": {{
-                            "{}": {{
+                            "{tag}": {{
                                 "url": "https://example.com/hasboth.bottle.tar.gz",
                                 "sha256": "aabbccdd"
                             }}
                         }}
                     }}
                 }}
-            }}"#,
-            tag
-        );
+            }}"#
+            ),
+        )
+        .await;
 
-        Mock::given(method("GET"))
-            .and(path("/formula/hasboth.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(&formula_json))
-            .mount(&mock_server)
-            .await;
-
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.clone(),
-            root.join("locks"),
-        );
-
+        let installer = env.installer();
         let plan = installer.plan(&["hasboth".to_string()]).await.unwrap();
 
         assert_eq!(plan.items.len(), 1);
@@ -553,45 +430,19 @@ end
 
     #[tokio::test]
     async fn errors_when_no_bottle_and_no_source() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-
-        let formula_json = r#"{
+        let env = TestEnv::new().await;
+        env.mount_formula(
+            "nothing",
+            r#"{
             "name": "nothing",
             "versions": { "stable": "1.0.0" },
             "dependencies": [],
             "bottle": { "stable": { "files": {} } }
-        }"#;
+        }"#,
+        )
+        .await;
 
-        Mock::given(method("GET"))
-            .and(path("/formula/nothing.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json))
-            .mount(&mock_server)
-            .await;
-
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.clone(),
-            root.join("locks"),
-        );
-
+        let installer = env.installer();
         let result = installer.plan(&["nothing".to_string()]).await;
         assert!(result.is_err());
         assert!(matches!(
@@ -602,70 +453,29 @@ end
 
     #[tokio::test]
     async fn plan_best_effort_keeps_valid_formula_when_another_is_missing() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-
-        let tag = get_test_bottle_tag();
-        let formula_json = format!(
-            r#"{{
-                "name": "goodpkg",
-                "versions": {{ "stable": "1.0.0" }},
-                "dependencies": [],
-                "bottle": {{
-                    "stable": {{
-                        "files": {{
-                            "{}": {{
-                                "url": "{}/bottles/goodpkg-1.0.0.{}.bottle.tar.gz",
-                                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                            }}
-                        }}
-                    }}
-                }}
-            }}"#,
-            tag,
-            mock_server.uri(),
-            tag
-        );
-
-        Mock::given(method("GET"))
-            .and(path("/formula/goodpkg.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json))
-            .mount(&mock_server)
-            .await;
+        let env = TestEnv::new().await;
+        env.mount_formula(
+            "goodpkg",
+            formula_json(
+                "goodpkg",
+                "1.0.0",
+                &env.bottle_url("goodpkg", "1.0.0"),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+        )
+        .await;
         Mock::given(method("GET"))
             .and(path("/formula/missingpkg.json"))
             .respond_with(ResponseTemplate::new(404))
-            .mount(&mock_server)
+            .mount(&env.server)
             .await;
         Mock::given(method("GET"))
             .and(path("/formula.json"))
             .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
-            .mount(&mock_server)
+            .mount(&env.server)
             .await;
 
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.clone(),
-            root.join("locks"),
-        );
-
+        let installer = env.installer();
         let names = vec!["goodpkg".to_string(), "missingpkg".to_string()];
         let (plan, failures) = installer.plan_best_effort(&names, false).await;
 

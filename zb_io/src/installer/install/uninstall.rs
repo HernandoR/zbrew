@@ -147,185 +147,59 @@ fn remove_dangling_links(db: &Database, name: &str, version: &str, keg_path: &Pa
 mod tests {
     use std::fs;
 
-    use tempfile::TempDir;
     use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use wiremock::{Mock, ResponseTemplate};
 
-    use crate::cellar::Cellar;
-    use crate::installer::install::test_support::*;
-    use crate::network::api::ApiClient;
-    use crate::storage::blob::BlobCache;
-    use crate::storage::db::Database;
-    use crate::storage::store::Store;
-    use crate::{Installer, Linker};
+    use crate::Installer;
+    use crate::test_support::*;
 
     #[tokio::test]
     async fn uninstall_cleans_everything() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-
-        let bottle = create_bottle_tarball("uninstallme");
-        let bottle_sha = sha256_hex(&bottle);
-
-        let tag = get_test_bottle_tag();
-        let formula_json = format!(
-            r#"{{
-                "name": "uninstallme",
-                "versions": {{ "stable": "1.0.0" }},
-                "dependencies": [],
-                "bottle": {{
-                    "stable": {{
-                        "files": {{
-                            "{}": {{
-                                "url": "{}/bottles/uninstallme-1.0.0.{}.bottle.tar.gz",
-                                "sha256": "{}"
-                            }}
-                        }}
-                    }}
-                }}
-            }}"#,
-            tag,
-            mock_server.uri(),
-            tag,
-            bottle_sha
-        );
-
-        Mock::given(method("GET"))
-            .and(path("/formula/uninstallme.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(&formula_json))
-            .mount(&mock_server)
+        let env = TestEnv::new().await;
+        env.mount_bottled_formula("uninstallme", "1.0.0", create_bottle_tarball("uninstallme"))
             .await;
 
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/bottles/uninstallme-1.0.0.{}.bottle.tar.gz",
-                tag
-            )))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle.clone()))
-            .mount(&mock_server)
-            .await;
-
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let mut installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.clone(),
-            root.join("locks"),
-        );
-
+        let mut installer = env.installer();
         installer
             .install(&["uninstallme".to_string()], true)
             .await
             .unwrap();
 
         assert!(installer.is_installed("uninstallme"));
-        assert!(root.join("cellar/uninstallme/1.0.0").exists());
-        assert!(prefix.join("bin/uninstallme").exists());
+        assert!(env.root.join("cellar/uninstallme/1.0.0").exists());
+        assert!(env.prefix.join("bin/uninstallme").exists());
 
         installer.uninstall("uninstallme").unwrap();
 
         assert!(!installer.is_installed("uninstallme"));
-        assert!(!root.join("cellar/uninstallme/1.0.0").exists());
-        assert!(!prefix.join("bin/uninstallme").exists());
+        assert!(!env.root.join("cellar/uninstallme/1.0.0").exists());
+        assert!(!env.prefix.join("bin/uninstallme").exists());
     }
 
     #[tokio::test]
     async fn gc_removes_unreferenced_store_entries() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-
-        let bottle = create_bottle_tarball("gctest");
-        let bottle_sha = sha256_hex(&bottle);
-
-        let tag = get_test_bottle_tag();
-        let formula_json = format!(
-            r#"{{
-                "name": "gctest",
-                "versions": {{ "stable": "1.0.0" }},
-                "dependencies": [],
-                "bottle": {{
-                    "stable": {{
-                        "files": {{
-                            "{}": {{
-                                "url": "{}/bottles/gctest-1.0.0.{}.bottle.tar.gz",
-                                "sha256": "{}"
-                            }}
-                        }}
-                    }}
-                }}
-            }}"#,
-            tag,
-            mock_server.uri(),
-            tag,
-            bottle_sha
-        );
-
-        Mock::given(method("GET"))
-            .and(path("/formula/gctest.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(&formula_json))
-            .mount(&mock_server)
+        let env = TestEnv::new().await;
+        let bottle_sha = env
+            .mount_bottled_formula("gctest", "1.0.0", create_bottle_tarball("gctest"))
             .await;
 
-        Mock::given(method("GET"))
-            .and(path(format!("/bottles/gctest-1.0.0.{}.bottle.tar.gz", tag)))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle.clone()))
-            .mount(&mock_server)
-            .await;
-
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let mut installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.clone(),
-            root.join("locks"),
-        );
-
+        let mut installer = env.installer();
         installer
             .install(&["gctest".to_string()], true)
             .await
             .unwrap();
 
-        assert!(root.join("store").join(&bottle_sha).exists());
+        assert!(env.root.join("store").join(&bottle_sha).exists());
 
         installer.uninstall("gctest").unwrap();
 
-        assert!(root.join("store").join(&bottle_sha).exists());
+        assert!(env.root.join("store").join(&bottle_sha).exists());
 
         let removed = installer.gc().unwrap();
         assert!(removed.removed_packages.is_empty());
         assert_eq!(removed.removed_store_keys, vec![bottle_sha.clone()]);
 
-        assert!(!root.join("store").join(&bottle_sha).exists());
+        assert!(!env.root.join("store").join(&bottle_sha).exists());
         assert!(
             installer
                 .db
@@ -337,111 +211,41 @@ mod tests {
 
     #[tokio::test]
     async fn gc_does_not_remove_referenced_store_entries() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-
-        let bottle = create_bottle_tarball("keepme");
-        let bottle_sha = sha256_hex(&bottle);
-
-        let tag = get_test_bottle_tag();
-        let formula_json = format!(
-            r#"{{
-                "name": "keepme",
-                "versions": {{ "stable": "1.0.0" }},
-                "dependencies": [],
-                "bottle": {{
-                    "stable": {{
-                        "files": {{
-                            "{}": {{
-                                "url": "{}/bottles/keepme-1.0.0.{}.bottle.tar.gz",
-                                "sha256": "{}"
-                            }}
-                        }}
-                    }}
-                }}
-            }}"#,
-            tag,
-            mock_server.uri(),
-            tag,
-            bottle_sha
-        );
-
-        Mock::given(method("GET"))
-            .and(path("/formula/keepme.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(&formula_json))
-            .mount(&mock_server)
+        let env = TestEnv::new().await;
+        let bottle_sha = env
+            .mount_bottled_formula("keepme", "1.0.0", create_bottle_tarball("keepme"))
             .await;
 
-        Mock::given(method("GET"))
-            .and(path(format!("/bottles/keepme-1.0.0.{}.bottle.tar.gz", tag)))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle.clone()))
-            .mount(&mock_server)
-            .await;
-
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let mut installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.clone(),
-            root.join("locks"),
-        );
-
+        let mut installer = env.installer();
         installer
             .install(&["keepme".to_string()], true)
             .await
             .unwrap();
 
-        assert!(root.join("store").join(&bottle_sha).exists());
+        assert!(env.root.join("store").join(&bottle_sha).exists());
 
         let removed = installer.gc().unwrap();
         assert!(removed.is_empty());
 
-        assert!(root.join("store").join(&bottle_sha).exists());
+        assert!(env.root.join("store").join(&bottle_sha).exists());
     }
 
     #[tokio::test]
     async fn uninstall_accepts_full_tap_reference_after_install() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-
+        let env = TestEnv::new().await;
         let bottle = create_bottle_tarball("terraform");
         let sha = sha256_hex(&bottle);
-        let tag = get_test_bottle_tag();
-
-        let tap_formula_rb = format!(
-            r#"
-class Terraform < Formula
-  version "1.10.0"
-  bottle do
-    root_url "{}/v2/hashicorp/tap"
-    sha256 {}: "{}"
-  end
-end
-"#,
-            mock_server.uri(),
-            tag,
-            sha
-        );
 
         Mock::given(method("GET"))
             .and(path("/hashicorp/homebrew-tap/main/Formula/terraform.rb"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(tap_formula_rb))
-            .mount(&mock_server)
+            .respond_with(ResponseTemplate::new(200).set_body_string(tap_formula_rb(
+                "Terraform",
+                "1.10.0",
+                &format!("{}/v2/hashicorp/tap", env.uri()),
+                &sha,
+                &[],
+            )))
+            .mount(&env.server)
             .await;
 
         Mock::given(method("GET"))
@@ -449,33 +253,10 @@ end
                 "/v2/hashicorp/tap/terraform/blobs/sha256:{sha}"
             )))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle))
-            .mount(&mock_server)
+            .mount(&env.server)
             .await;
 
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client = ApiClient::with_base_url(format!("{}/formula", mock_server.uri()))
-            .unwrap()
-            .with_tap_raw_base_url(mock_server.uri());
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let mut installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.to_path_buf(),
-            root.join("locks"),
-        );
-
+        let mut installer = env.installer_with_taps();
         installer
             .install(&["hashicorp/tap/terraform".to_string()], true)
             .await
@@ -483,79 +264,19 @@ end
 
         assert!(installer.is_installed("hashicorp/tap/terraform"));
         assert!(!installer.is_installed("terraform"));
-        assert!(root.join("cellar/terraform/1.10.0").exists());
+        assert!(env.root.join("cellar/terraform/1.10.0").exists());
         installer.uninstall("hashicorp/tap/terraform").unwrap();
         assert!(!installer.is_installed("hashicorp/tap/terraform"));
-        assert!(!root.join("cellar/terraform/1.10.0").exists());
+        assert!(!env.root.join("cellar/terraform/1.10.0").exists());
     }
 
     #[tokio::test]
     async fn uninstalling_non_installed_tap_ref_does_not_remove_core_formula() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-
-        let bottle = create_bottle_tarball("terraform");
-        let sha = sha256_hex(&bottle);
-        let tag = get_test_bottle_tag();
-        let core_json = format!(
-            r#"{{
-                "name": "terraform",
-                "versions": {{ "stable": "1.10.0" }},
-                "dependencies": [],
-                "bottle": {{
-                    "stable": {{
-                        "files": {{
-                            "{}": {{
-                                "url": "{}/bottles/terraform-1.10.0.{}.bottle.tar.gz",
-                                "sha256": "{}"
-                            }}
-                        }}
-                    }}
-                }}
-            }}"#,
-            tag,
-            mock_server.uri(),
-            tag,
-            sha
-        );
-
-        Mock::given(method("GET"))
-            .and(path("/formula/terraform.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(core_json))
-            .mount(&mock_server)
+        let env = TestEnv::new().await;
+        env.mount_bottled_formula("terraform", "1.10.0", create_bottle_tarball("terraform"))
             .await;
 
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/bottles/terraform-1.10.0.{}.bottle.tar.gz",
-                tag
-            )))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle))
-            .mount(&mock_server)
-            .await;
-
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let mut installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.to_path_buf(),
-            root.join("locks"),
-        );
+        let mut installer = env.installer();
         installer
             .install(&["terraform".to_string()], true)
             .await
@@ -567,92 +288,32 @@ end
         assert!(installer.is_installed("terraform"));
     }
 
-    /// Install `ghost` 1.0.0 from a mock server and return the installer plus
-    /// the `(root, prefix)` paths it was built with.
-    async fn install_ghost(
-        mock_server: &MockServer,
-        tmp: &TempDir,
-    ) -> (Installer, std::path::PathBuf, std::path::PathBuf) {
-        let bottle = create_bottle_tarball("ghost");
-        let bottle_sha = sha256_hex(&bottle);
-        let tag = get_test_bottle_tag();
-        let formula_json = format!(
-            r#"{{
-                "name": "ghost",
-                "versions": {{ "stable": "1.0.0" }},
-                "dependencies": [],
-                "bottle": {{
-                    "stable": {{
-                        "files": {{
-                            "{}": {{
-                                "url": "{}/bottles/ghost-1.0.0.{}.bottle.tar.gz",
-                                "sha256": "{}"
-                            }}
-                        }}
-                    }}
-                }}
-            }}"#,
-            tag,
-            mock_server.uri(),
-            tag,
-            bottle_sha
-        );
-
-        Mock::given(method("GET"))
-            .and(path("/formula/ghost.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(&formula_json))
-            .mount(mock_server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!("/bottles/ghost-1.0.0.{}.bottle.tar.gz", tag)))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle))
-            .mount(mock_server)
+    /// Install `ghost` 1.0.0 from `env`'s mock server.
+    async fn install_ghost(env: &TestEnv) -> Installer {
+        env.mount_bottled_formula("ghost", "1.0.0", create_bottle_tarball("ghost"))
             .await;
 
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let mut installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix.clone(),
-            root.join("locks"),
-        );
-
+        let mut installer = env.installer();
         installer
             .install(&["ghost".to_string()], true)
             .await
             .unwrap();
         assert!(installer.is_installed("ghost"));
 
-        (installer, root, prefix)
+        installer
     }
 
     /// Regression test for issue #14: uninstalling a package whose keg files
     /// were deleted by hand must not leave dangling symlinks in the prefix.
     #[tokio::test]
     async fn uninstall_removes_dangling_links_when_keg_files_are_gone() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let (mut installer, root, prefix) = install_ghost(&mock_server, &tmp).await;
+        let env = TestEnv::new().await;
+        let mut installer = install_ghost(&env).await;
 
         // Simulate the user manually deleting the keg files (`rm -rf` on the
         // cellar directory) while the prefix symlinks remain.
-        fs::remove_dir_all(root.join("cellar/ghost/1.0.0")).unwrap();
-        let link = prefix.join("bin/ghost");
+        fs::remove_dir_all(env.root.join("cellar/ghost/1.0.0")).unwrap();
+        let link = env.prefix.join("bin/ghost");
         assert!(link.is_symlink(), "precondition: link still present");
         assert!(!link.exists(), "precondition: link is dangling");
 
@@ -670,16 +331,15 @@ end
     /// survive the uninstall, even when our own keg files are gone.
     #[tokio::test]
     async fn uninstall_keeps_recorded_link_owned_by_someone_else() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let (mut installer, root, prefix) = install_ghost(&mock_server, &tmp).await;
+        let env = TestEnv::new().await;
+        let mut installer = install_ghost(&env).await;
 
-        fs::remove_dir_all(root.join("cellar/ghost/1.0.0")).unwrap();
+        fs::remove_dir_all(env.root.join("cellar/ghost/1.0.0")).unwrap();
 
         // Another formula relinked `bin/ghost` at its own, still-present file.
-        let other = tmp.path().join("other-bin-ghost");
+        let other = env.tmp_path().join("other-bin-ghost");
         fs::write(&other, b"#!/bin/sh\n").unwrap();
-        let link = prefix.join("bin/ghost");
+        let link = env.prefix.join("bin/ghost");
         fs::remove_file(&link).unwrap();
         std::os::unix::fs::symlink(&other, &link).unwrap();
 
@@ -689,72 +349,18 @@ end
         assert!(link.is_symlink(), "live foreign link was removed");
         assert_eq!(fs::read_link(&link).unwrap(), other);
     }
-    /// Mount a formula and its bottle on `mock_server`.
-    async fn mount_formula(
-        mock_server: &MockServer,
-        name: &str,
-        deps: &[&str],
-        bottle: &[u8],
-    ) -> String {
-        let sha = sha256_hex(bottle);
-        let tag = get_test_bottle_tag();
-        let deps_json = deps
-            .iter()
-            .map(|d| format!("\"{d}\""))
-            .collect::<Vec<_>>()
-            .join(",");
-        let formula_json = format!(
-            r#"{{"name":"{name}","versions":{{"stable":"1.0.0"}},"dependencies":[{deps_json}],"bottle":{{"stable":{{"files":{{"{tag}":{{"url":"{uri}/bottles/{name}.tar.gz","sha256":"{sha}"}}}}}}}}}}"#,
-            uri = mock_server.uri()
-        );
-
-        Mock::given(method("GET"))
-            .and(path(format!("/formula/{name}.json")))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json))
-            .mount(mock_server)
-            .await;
-
-        Mock::given(method("GET"))
-            .and(path(format!("/bottles/{name}.tar.gz")))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle.to_vec()))
-            .mount(mock_server)
-            .await;
-
-        sha
-    }
-
-    fn installer_at(
-        mock_server: &MockServer,
-        root: &std::path::Path,
-        prefix: &std::path::Path,
-    ) -> Installer {
-        fs::create_dir_all(root.join("db")).unwrap();
-        Installer::new(
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap(),
-            BlobCache::new(&root.join("cache")).unwrap(),
-            Store::new(root).unwrap(),
-            Cellar::new(root).unwrap(),
-            Linker::new(prefix).unwrap(),
-            Database::open(&root.join("db/zb.sqlite3")).unwrap(),
-            prefix.to_path_buf(),
-            root.join("locks"),
-        )
-    }
 
     /// The reclaim `zb list` hiding transient kegs would otherwise only
     /// paper over: gc has to delete the keg row, the cellar directory and
     /// the store entry. See issue #36.
     #[tokio::test]
     async fn gc_reclaims_transient_kegs() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
+        let env = TestEnv::new().await;
+        let sha = env
+            .mount_bottled_formula("gcrun", "1.0.0", create_bottle_tarball("gcrun"))
+            .await;
 
-        let bottle = create_bottle_tarball("gcrun");
-        let sha = mount_formula(&mock_server, "gcrun", &[], &bottle).await;
-
-        let mut installer = installer_at(&mock_server, &root, &prefix);
+        let mut installer = env.installer();
         let plan = installer.plan(&["gcrun".to_string()]).await.unwrap();
         installer.execute(plan.transient(), false).await.unwrap();
 
@@ -765,15 +371,15 @@ end
                 .reason
                 .is_transient()
         );
-        assert!(root.join("store").join(&sha).exists());
+        assert!(env.root.join("store").join(&sha).exists());
 
         let outcome = installer.gc().unwrap();
         assert_eq!(outcome.removed_packages, vec!["gcrun".to_string()]);
         assert_eq!(outcome.removed_store_keys, vec![sha.clone()]);
 
         assert!(!installer.is_installed("gcrun"));
-        assert!(!root.join("store").join(&sha).exists());
-        assert!(!root.join("cellar/gcrun/1.0.0").exists());
+        assert!(!env.root.join("store").join(&sha).exists());
+        assert!(!env.root.join("cellar/gcrun/1.0.0").exists());
     }
 
     /// A dependency a `zbx` run left behind must survive gc once something
@@ -781,17 +387,19 @@ end
     /// closure, which promotes the transient row to retained.
     #[tokio::test]
     async fn gc_keeps_a_transient_dependency_a_later_install_adopted() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
+        let env = TestEnv::new().await;
+        let dep_sha = env
+            .mount_bottled_formula("gcdep", "1.0.0", create_bottle_tarball("gcdep"))
+            .await;
+        env.mount_bottled_formula_with_deps(
+            "gcapp",
+            "1.0.0",
+            &["gcdep"],
+            create_bottle_tarball("gcapp"),
+        )
+        .await;
 
-        let dep_bottle = create_bottle_tarball("gcdep");
-        let app_bottle = create_bottle_tarball("gcapp");
-        let dep_sha = mount_formula(&mock_server, "gcdep", &[], &dep_bottle).await;
-        mount_formula(&mock_server, "gcapp", &["gcdep"], &app_bottle).await;
-
-        let mut installer = installer_at(&mock_server, &root, &prefix);
+        let mut installer = env.installer();
 
         let plan = installer.plan(&["gcdep".to_string()]).await.unwrap();
         installer.execute(plan.transient(), false).await.unwrap();
@@ -811,6 +419,6 @@ end
         let outcome = installer.gc().unwrap();
         assert!(outcome.removed_packages.is_empty());
         assert!(installer.is_installed("gcdep"));
-        assert!(root.join("store").join(&dep_sha).exists());
+        assert!(env.root.join("store").join(&dep_sha).exists());
     }
 }

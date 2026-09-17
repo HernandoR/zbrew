@@ -140,75 +140,26 @@ impl Installer {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
-    use tempfile::TempDir;
     use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use wiremock::{Mock, ResponseTemplate};
 
-    use crate::cellar::Cellar;
-    use crate::network::api::ApiClient;
-    use crate::storage::blob::BlobCache;
-    use crate::storage::db::{Database, InstallReason};
-    use crate::storage::store::Store;
-    use crate::{Installer, Linker};
+    use crate::storage::db::InstallReason;
+    use crate::test_support::*;
 
-    use super::super::test_support::get_test_bottle_tag;
-
-    fn formula_json(name: &str, version: &str, sha256: &str) -> String {
-        let tag = get_test_bottle_tag();
-        format!(
-            r#"{{
-                "name": "{}",
-                "versions": {{ "stable": "{}" }},
-                "dependencies": [],
-                "bottle": {{
-                    "stable": {{
-                        "files": {{
-                            "{}": {{
-                                "url": "https://example.com/{}-{}.{}.bottle.tar.gz",
-                                "sha256": "{}"
-                            }}
-                        }}
-                    }}
-                }}
-            }}"#,
-            name, version, tag, name, version, tag, sha256
+    /// The API's answer for `name` at `version`. These tests compare recorded
+    /// checksums and versions only, so the bottle itself is never fetched.
+    fn api_formula(name: &str, version: &str, sha256: &str) -> String {
+        formula_json(
+            name,
+            version,
+            &format!("https://example.com{}", bottle_path(name, version)),
+            sha256,
         )
-    }
-
-    async fn test_installer() -> (Installer, MockServer, TempDir) {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix,
-            root.join("locks"),
-        );
-        (installer, mock_server, tmp)
     }
 
     #[tokio::test]
     async fn suggest_formulas_returns_matches_from_api_client() {
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new().unwrap();
+        let env = TestEnv::new().await;
 
         let bulk = r#"[
             {"name":"python"},
@@ -219,39 +170,18 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/formula.json"))
             .respond_with(ResponseTemplate::new(200).set_body_string(bulk))
-            .mount(&mock_server)
+            .mount(&env.server)
             .await;
 
-        let root = tmp.path().join("zbrew");
-        let prefix = tmp.path().join("homebrew");
-        fs::create_dir_all(root.join("db")).unwrap();
-
-        let api_client =
-            ApiClient::with_base_url(format!("{}/formula", mock_server.uri())).unwrap();
-        let blob_cache = BlobCache::new(&root.join("cache")).unwrap();
-        let store = Store::new(&root).unwrap();
-        let cellar = Cellar::new(&root).unwrap();
-        let linker = Linker::new(&prefix).unwrap();
-        let db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
-
-        let installer = Installer::new(
-            api_client,
-            blob_cache,
-            store,
-            cellar,
-            linker,
-            db,
-            prefix,
-            root.join("locks"),
-        );
-
+        let installer = env.installer();
         let suggestions = installer.suggest_formulas("pythn", 3).await.unwrap();
         assert_eq!(suggestions.first().map(String::as_str), Some("python"));
     }
 
     #[tokio::test]
     async fn is_outdated_returns_none_when_sha256_matches() {
-        let (mut installer, mock_server, _tmp) = test_installer().await;
+        let env = TestEnv::new().await;
+        let mut installer = env.installer();
         let sha = "abc123def456";
 
         {
@@ -261,12 +191,7 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        Mock::given(method("GET"))
-            .and(path("/formula/jq.json"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_string(formula_json("jq", "1.7.1", sha)),
-            )
-            .mount(&mock_server)
+        env.mount_formula("jq", api_formula("jq", "1.7.1", sha))
             .await;
 
         let result = installer.is_outdated("jq").await.unwrap();
@@ -275,7 +200,8 @@ mod tests {
 
     #[tokio::test]
     async fn is_outdated_returns_some_when_sha256_differs() {
-        let (mut installer, mock_server, _tmp) = test_installer().await;
+        let env = TestEnv::new().await;
+        let mut installer = env.installer();
 
         {
             let tx = installer.db.transaction().unwrap();
@@ -284,14 +210,7 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        Mock::given(method("GET"))
-            .and(path("/formula/jq.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                "jq",
-                "1.7.1",
-                "new_sha256",
-            )))
-            .mount(&mock_server)
+        env.mount_formula("jq", api_formula("jq", "1.7.1", "new_sha256"))
             .await;
 
         let result = installer.is_outdated("jq").await.unwrap().unwrap();
@@ -303,7 +222,8 @@ mod tests {
 
     #[tokio::test]
     async fn is_outdated_errors_for_not_installed() {
-        let (installer, _mock_server, _tmp) = test_installer().await;
+        let env = TestEnv::new().await;
+        let installer = env.installer();
 
         let err = installer.is_outdated("jq").await.unwrap_err();
         assert!(matches!(err, zb_core::Error::NotInstalled { .. }));
@@ -311,7 +231,8 @@ mod tests {
 
     #[tokio::test]
     async fn is_outdated_source_build_compares_version_only() {
-        let (mut installer, mock_server, _tmp) = test_installer().await;
+        let env = TestEnv::new().await;
+        let mut installer = env.installer();
 
         {
             let tx = installer.db.transaction().unwrap();
@@ -320,14 +241,7 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        Mock::given(method("GET"))
-            .and(path("/formula/jq.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                "jq",
-                "1.7.1",
-                "irrelevant",
-            )))
-            .mount(&mock_server)
+        env.mount_formula("jq", api_formula("jq", "1.7.1", "irrelevant"))
             .await;
 
         let result = installer.is_outdated("jq").await.unwrap();
@@ -336,7 +250,8 @@ mod tests {
 
     #[tokio::test]
     async fn is_outdated_source_build_detects_new_version() {
-        let (mut installer, mock_server, _tmp) = test_installer().await;
+        let env = TestEnv::new().await;
+        let mut installer = env.installer();
 
         {
             let tx = installer.db.transaction().unwrap();
@@ -345,14 +260,7 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        Mock::given(method("GET"))
-            .and(path("/formula/jq.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(formula_json(
-                "jq",
-                "1.7.1",
-                "irrelevant",
-            )))
-            .mount(&mock_server)
+        env.mount_formula("jq", api_formula("jq", "1.7.1", "irrelevant"))
             .await;
 
         let result = installer.is_outdated("jq").await.unwrap().unwrap();
@@ -363,7 +271,8 @@ mod tests {
 
     #[tokio::test]
     async fn check_outdated_empty_when_nothing_installed() {
-        let (installer, _mock_server, _tmp) = test_installer().await;
+        let env = TestEnv::new().await;
+        let installer = env.installer();
 
         let (outdated, warnings) = installer.check_outdated().await.unwrap();
         assert!(outdated.is_empty());
@@ -372,7 +281,8 @@ mod tests {
 
     #[tokio::test]
     async fn check_outdated_continues_on_network_failure() {
-        let (mut installer, mock_server, _tmp) = test_installer().await;
+        let env = TestEnv::new().await;
+        let mut installer = env.installer();
 
         {
             let tx = installer.db.transaction().unwrap();
@@ -383,17 +293,17 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        let bulk = format!("[{}]", formula_json("good", "2.0.0", "new_sha"));
+        let bulk = format!("[{}]", api_formula("good", "2.0.0", "new_sha"));
         Mock::given(method("GET"))
             .and(path("/formula.json"))
             .respond_with(ResponseTemplate::new(200).set_body_string(bulk))
-            .mount(&mock_server)
+            .mount(&env.server)
             .await;
 
         Mock::given(method("GET"))
             .and(path("/formula/bad.json"))
             .respond_with(ResponseTemplate::new(500))
-            .mount(&mock_server)
+            .mount(&env.server)
             .await;
 
         let (outdated, warnings) = installer.check_outdated().await.unwrap();
@@ -405,7 +315,8 @@ mod tests {
 
     #[tokio::test]
     async fn check_outdated_warns_on_missing_bottle() {
-        let (mut installer, mock_server, _tmp) = test_installer().await;
+        let env = TestEnv::new().await;
+        let mut installer = env.installer();
 
         {
             let tx = installer.db.transaction().unwrap();
@@ -424,7 +335,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/formula.json"))
             .respond_with(ResponseTemplate::new(200).set_body_string(bulk))
-            .mount(&mock_server)
+            .mount(&env.server)
             .await;
 
         let (outdated, warnings) = installer.check_outdated().await.unwrap();
