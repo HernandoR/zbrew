@@ -1155,4 +1155,126 @@ mod tests {
         let downloaded_content = std::fs::read(&blob_path).unwrap();
         assert_eq!(downloaded_content, large_content);
     }
+
+    /// Bottles live on ghcr.io, which answers every unauthenticated request with
+    /// a 401 and a token challenge. The size probe has to survive that challenge,
+    /// otherwise a large bottle silently falls back to a single whole-file GET
+    /// and the chunked path never runs in production even though it passes every
+    /// unauthenticated test. This test's shared token cache lets the size probe's
+    /// challenge warm the token before any range request goes out, so it does not
+    /// exercise the range-retry fix on its own — see
+    /// `auth::tests::range_request_keeps_its_range_across_a_token_challenge` for
+    /// that.
+    #[tokio::test]
+    async fn chunked_download_survives_registry_token_challenge() {
+        let mock_server = MockServer::start().await;
+
+        let large_content = vec![0x5Au8; 15 * 1024 * 1024];
+        let actual_sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.update(&large_content);
+            crate::checksum::sha256_hex(hasher)
+        };
+
+        // `extract_scope_for_url` keys the token cache off the `ghcr.io/v2/`
+        // marker, so the mock path mirrors a real bottle URL.
+        let blob_path_str = "/ghcr.io/v2/homebrew/core/testpkg/blobs/sha256-abc";
+        let challenge = format!(
+            r#"Bearer realm="{}/token",service="ghcr.io",scope="repository:homebrew/core/testpkg:pull""#,
+            mock_server.uri()
+        );
+
+        Mock::given(method("GET"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"token":"test-token"}"#))
+            .mount(&mock_server)
+            .await;
+
+        let head_challenges = Arc::new(AtomicUsize::new(0));
+        let head_challenges_clone = head_challenges.clone();
+        let head_challenge = challenge.clone();
+        let content_len = large_content.len();
+
+        Mock::given(method("HEAD"))
+            .and(path(blob_path_str))
+            .respond_with(move |req: &wiremock::Request| {
+                if req.headers.get("Authorization").is_none() {
+                    head_challenges_clone.fetch_add(1, Ordering::SeqCst);
+                    return ResponseTemplate::new(401)
+                        .append_header("WWW-Authenticate", head_challenge.as_str());
+                }
+
+                ResponseTemplate::new(200)
+                    .append_header("Accept-Ranges", "bytes")
+                    .append_header("Content-Length", content_len.to_string())
+            })
+            .mount(&mock_server)
+            .await;
+
+        let range_requests = Arc::new(AtomicUsize::new(0));
+        let whole_file_requests = Arc::new(AtomicUsize::new(0));
+        let range_requests_clone = range_requests.clone();
+        let whole_file_requests_clone = whole_file_requests.clone();
+        let body = large_content.clone();
+
+        Mock::given(method("GET"))
+            .and(path(blob_path_str))
+            .respond_with(move |req: &wiremock::Request| {
+                if req.headers.get("Authorization").is_none() {
+                    return ResponseTemplate::new(401)
+                        .append_header("WWW-Authenticate", challenge.as_str());
+                }
+
+                let Some(range_header) = req.headers.get("Range") else {
+                    whole_file_requests_clone.fetch_add(1, Ordering::SeqCst);
+                    return ResponseTemplate::new(200).set_body_bytes(body.clone());
+                };
+
+                range_requests_clone.fetch_add(1, Ordering::SeqCst);
+
+                let range_str = range_header.to_str().unwrap();
+                let range_part = range_str.strip_prefix("bytes=").unwrap();
+                let (start_str, end_str) = range_part.split_once('-').unwrap();
+                let start: usize = start_str.parse().unwrap();
+                let end: usize = end_str.parse().unwrap();
+
+                let chunk = &body[start..=end];
+                ResponseTemplate::new(206)
+                    .append_header("Content-Length", chunk.len().to_string())
+                    .append_header(
+                        "Content-Range",
+                        format!("bytes {}-{}/{}", start, end, body.len()),
+                    )
+                    .set_body_bytes(chunk.to_vec())
+            })
+            .mount(&mock_server)
+            .await;
+
+        let tmp = TempDir::new().unwrap();
+        let blob_cache = BlobCache::new(tmp.path()).unwrap();
+        let downloader = Downloader::with_semaphore(blob_cache, None);
+
+        let url = format!("{}{blob_path_str}", mock_server.uri());
+        let result = downloader
+            .download_with_progress(&url, &actual_sha256, None, None)
+            .await;
+
+        assert!(result.is_ok(), "download failed: {:?}", result.err());
+        assert_eq!(std::fs::read(result.unwrap()).unwrap(), large_content);
+
+        assert!(
+            head_challenges.load(Ordering::SeqCst) > 0,
+            "the mock registry never issued a token challenge, so this test proves nothing"
+        );
+        assert!(
+            range_requests.load(Ordering::SeqCst) > 0,
+            "an authenticated registry served a large file without any Range request, \
+             so the chunked path was skipped"
+        );
+        assert_eq!(
+            whole_file_requests.load(Ordering::SeqCst),
+            0,
+            "the whole file was fetched in one GET despite the server supporting ranges"
+        );
+    }
 }
