@@ -1,0 +1,36 @@
+[package]
+name = "zb_installer"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+
+[dependencies]
+futures.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+zb_core = { path = "../zb_core" }
+zb_extract = { path = "../zb_extract" }
+zb_net = { path = "../zb_net" }
+zb_store = { path = "../zb_store" }
+
+[features]
+android-support = ["zb_net/android-support"]
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+reqwest = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+reqwest = { version = "0.13.1", default-features = false, features = ["json", "stream", "http2"] }
+
+[dev-dependencies]
+flate2.workspace = true
+regex.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+wiremock.workspace = true
+zb_net = { path = "../zb_net", features = ["test-util"] }

@@ -8,7 +8,7 @@ use crate::cli::BundleCommands;
 use crate::ui::StdUi;
 
 pub async fn execute(
-    installer: &mut zb_io::Installer,
+    installer: &mut zb_installer::Installer,
     command: Option<BundleCommands>,
     ui: &mut StdUi,
 ) -> Result<(), zb_core::Error> {
@@ -24,7 +24,7 @@ pub async fn execute(
 }
 
 async fn install_from_file(
-    installer: &mut zb_io::Installer,
+    installer: &mut zb_installer::Installer,
     manifest_path: &Path,
     no_link: bool,
     ui: &mut StdUi,
@@ -51,7 +51,7 @@ async fn install_from_file(
 }
 
 fn dump_to_file(
-    installer: &mut zb_io::Installer,
+    installer: &mut zb_installer::Installer,
     file_path: &Path,
     force: bool,
 ) -> Result<(), zb_core::Error> {

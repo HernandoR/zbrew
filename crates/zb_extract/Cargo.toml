@@ -1,0 +1,25 @@
+[package]
+name = "zb_extract"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+
+[dependencies]
+flate2.workspace = true
+libc.workspace = true
+rayon.workspace = true
+regex.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+walkdir.workspace = true
+xz2.workspace = true
+zstd.workspace = true
+zip.workspace = true
+zb_core = { path = "../zb_core" }
+arwen = "0.0.5"
+object = "0.40.0"
+
+[dev-dependencies]
+tempfile.workspace = true

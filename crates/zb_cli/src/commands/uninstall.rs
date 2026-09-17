@@ -3,7 +3,7 @@ use crate::utils::normalize_formula_name;
 use console::style;
 
 pub fn execute(
-    installer: &mut zb_io::Installer,
+    installer: &mut zb_installer::Installer,
     formulas: Vec<String>,
     all: bool,
     ui: &mut StdUi,
@@ -92,7 +92,7 @@ fn ui_error(err: std::io::Error) -> zb_core::Error {
 mod tests {
     use tempfile::TempDir;
     use wiremock::MockServer;
-    use zb_io::Installer;
+    use zb_installer::Installer;
 
     use crate::commands::test_support::{make_installer, mount_formula};
     use crate::ui::StdUi;

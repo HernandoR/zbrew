@@ -8,7 +8,7 @@ use zb_cli::{
     ui::Ui,
     utils::{get_prefix_path, get_root_path},
 };
-use zb_io::create_installer;
+use zb_installer::create_installer;
 
 #[tokio::main]
 async fn main() {
@@ -48,9 +48,9 @@ async fn run(cli: Cli) -> Result<(), zb_core::Error> {
     // packages that break at run time. `reset` is exempt, because deleting an
     // unusable prefix is the way out of one.
     if !matches!(cli.command, Commands::Reset { .. }) {
-        zb_io::check_prefix_fits(
+        zb_extract::check_prefix_fits(
             &prefix.to_string_lossy(),
-            zb_io::homebrew_prefix_for_host(std::env::consts::OS, std::env::consts::ARCH),
+            zb_extract::homebrew_prefix_for_host(std::env::consts::OS, std::env::consts::ARCH),
         )
         .map_err(|too_long| zb_core::Error::InvalidArgument {
             message: too_long.message(),
@@ -62,8 +62,8 @@ async fn run(cli: Cli) -> Result<(), zb_core::Error> {
     // its directory tree underneath an unvalidated path. reset::execute checks
     // again for the benefit of non-CLI callers.
     if matches!(cli.command, Commands::Reset { .. }) {
-        zb_io::validate_destructive_path(&root)?;
-        zb_io::validate_destructive_path(&prefix)?;
+        zb_core::validate_destructive_path(&root)?;
+        zb_core::validate_destructive_path(&prefix)?;
     }
 
     if !matches!(cli.command, Commands::Reset { .. }) {

@@ -3,7 +3,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use zb_core::formula_token;
-use zb_io::Installer;
+use zb_installer::Installer;
 
 use crate::utils::{normalize_formula_name, suggest_missing_formula_matches};
 
@@ -87,12 +87,12 @@ pub async fn execute(
     cmd.args(&args);
 
     if let Some(prefix_path) = detect_runtime_prefix(&bin_path) {
-        if let Some(ca_bundle) = zb_io::find_ca_bundle_from_prefix(&prefix_path) {
+        if let Some(ca_bundle) = zb_core::find_ca_bundle_from_prefix(&prefix_path) {
             cmd.env("CURL_CA_BUNDLE", &ca_bundle);
             cmd.env("SSL_CERT_FILE", &ca_bundle);
         }
 
-        if let Some(ca_dir) = zb_io::find_ca_dir(&prefix_path) {
+        if let Some(ca_dir) = zb_core::find_ca_dir(&prefix_path) {
             cmd.env("SSL_CERT_DIR", &ca_dir);
         }
 
@@ -143,7 +143,9 @@ mod tests {
     use tempfile::TempDir;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    use zb_io::{ApiClient, BlobCache, Cellar, Database, Linker, Store};
+    use zb_installer::{Cellar, Linker};
+    use zb_net::ApiClient;
+    use zb_store::{BlobCache, Database, Store};
 
     fn create_bottle_tarball(formula_name: &str) -> Vec<u8> {
         use flate2::Compression;

@@ -1,6 +1,7 @@
 use console::style;
 use std::path::{Path, PathBuf};
-use zb_io::{DEFAULT_MACOS_PREFIX, Installer};
+use zb_extract::DEFAULT_MACOS_PREFIX;
+use zb_installer::Installer;
 
 pub fn normalize_formula_name(name: &str) -> Result<String, zb_core::Error> {
     let trimmed = name.trim();
@@ -184,7 +185,9 @@ mod tests {
     use tempfile::TempDir;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    use zb_io::{ApiClient, BlobCache, Cellar, Database, Installer, Linker, Store};
+    use zb_installer::{Cellar, Installer, Linker};
+    use zb_net::ApiClient;
+    use zb_store::{BlobCache, Database, Store};
 
     use super::{
         format_formula_suggestions, get_prefix_path_for_os, normalize_formula_name,

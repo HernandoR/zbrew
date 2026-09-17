@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::ui::{PromptDefault, StdUi};
-use zb_io::{check_prefix_fits, homebrew_prefix_for_host, validate_privileged_path};
+use zb_core::validate_privileged_path;
+use zb_extract::{check_prefix_fits, homebrew_prefix_for_host};
 
 #[derive(Debug)]
 pub enum InitError {
@@ -592,7 +593,7 @@ mod tests {
         let err = ensure_prefix_fits(
             Path::new("/opt/zbrew"),
             Path::new("/opt/pkgtools"),
-            zb_io::homebrew_prefix_for_host("macos", "x86_64"),
+            zb_extract::homebrew_prefix_for_host("macos", "x86_64"),
         )
         .expect_err("13 characters cannot fit Intel's 10");
 
@@ -608,7 +609,7 @@ mod tests {
             ensure_prefix_fits(
                 Path::new("/opt/zbrew"),
                 Path::new("/opt/pkgtools"),
-                zb_io::homebrew_prefix_for_host("macos", arch),
+                zb_extract::homebrew_prefix_for_host("macos", arch),
             )
         };
 
@@ -619,14 +620,14 @@ mod tests {
     #[test]
     fn init_accepts_the_default_prefix_on_every_platform() {
         for host in [
-            zb_io::homebrew_prefix_for_host("macos", "x86_64"),
-            zb_io::homebrew_prefix_for_host("macos", "aarch64"),
-            zb_io::homebrew_prefix_for_host("linux", "x86_64"),
+            zb_extract::homebrew_prefix_for_host("macos", "x86_64"),
+            zb_extract::homebrew_prefix_for_host("macos", "aarch64"),
+            zb_extract::homebrew_prefix_for_host("linux", "x86_64"),
         ] {
             assert!(
                 ensure_prefix_fits(
-                    Path::new(zb_io::DEFAULT_MACOS_PREFIX),
-                    Path::new(zb_io::DEFAULT_MACOS_PREFIX),
+                    Path::new(zb_extract::DEFAULT_MACOS_PREFIX),
+                    Path::new(zb_extract::DEFAULT_MACOS_PREFIX),
                     host,
                 )
                 .is_ok(),
@@ -640,7 +641,7 @@ mod tests {
         let err = ensure_prefix_fits(
             Path::new("/opt/zbrew"),
             Path::new("/opt/pkgtools"),
-            zb_io::homebrew_prefix_for_host("macos", "x86_64"),
+            zb_extract::homebrew_prefix_for_host("macos", "x86_64"),
         )
         .expect_err("13 characters cannot fit Intel's 10");
 
