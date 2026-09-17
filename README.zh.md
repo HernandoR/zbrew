@@ -101,6 +101,24 @@ zbx jq --version                # 在不链接、不保留的情况下运行
 zb list --all                   # 列出已安装的软件包，包括 zbx 临时安装
 ```
 
+## 手册页 (Manual pages)
+
+`zb` 自带手册页。安装程序会把 `zb.1` 以及每个子命令各自的页面写入 `$ZBREW_MAN/man1`；
+该路径默认是 `$ZBREW_BIN` 旁边的 `share/man` 目录，也就是 `man` 为 `PATH` 上的命令
+本来就会搜索的位置：
+
+```bash
+man zb              # 命令本身、全局选项和全部子命令
+man zb-install      # 每个子命令一页，包含它自己的选项
+```
+
+手册页由正在安装的那个 `zb` 二进制生成，因此不会描述成另一个版本。也可以随时自行生成：
+
+```bash
+zb man                            # 把 zb.1 写到标准输出
+zb man --output-dir ~/man/man1    # 写出 zb.1 和每个子命令的页面
+```
+
 ## 性能快照 (Performance snapshot)
 
 <div align="center">
