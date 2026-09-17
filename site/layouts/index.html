@@ -1,0 +1,26 @@
+{{ define "main" }}
+  <div class="home-shell">
+    {{ partial "home/hero.html" . }}
+
+    <section class="wave-fill" aria-label="Homepage highlights">
+      <div class="site-shell wave-fill-inner">
+        <section class="info-grid" aria-label="Install and benchmarks">
+          {{ partial "home/install-panel.html" . }}
+          {{ partial "home/benchmark-panel.html" . }}
+        </section>
+
+        <section class="summary-grid" aria-label="Homepage summary">
+          {{ range site.Data.home.sections.summaryCards }}
+            <article class="summary-card card-shadow">
+              <h2 class="summary-card-title">{{ .title }}</h2>
+              <p class="summary-card-body">{{ .body }}</p>
+              <a class="summary-card-link" href="{{ partial "url.html" .href }}">{{ .ctaLabel }}</a>
+            </article>
+          {{ end }}
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <script src="{{ "assets/js/home.js" | relURL }}" defer></script>
+{{ end }}

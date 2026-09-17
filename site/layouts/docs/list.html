@@ -1,0 +1,18 @@
+{{ define "main" }}
+  <article class="prose-page">
+    <div class="site-shell">
+      <header class="prose-header">
+        <p class="prose-eyebrow">Docs</p>
+        <h1 class="prose-title">{{ .Title }}</h1>
+        {{ with .Description }}<p class="prose-lede">{{ . }}</p>{{ end }}
+      </header>
+
+      <nav class="prose-toc" aria-label="On this page">
+        <p class="prose-toc-title">On this page</p>
+        {{ .TableOfContents }}
+      </nav>
+
+      <div class="prose">{{ .Content }}</div>
+    </div>
+  </article>
+{{ end }}

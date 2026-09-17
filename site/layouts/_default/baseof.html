@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="{{ site.LanguageCode | default "en" }}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ if not .IsHome }}{{ .Title }} · {{ end }}{{ site.Title }}</title>
+    <meta name="description" content="{{ .Description | default site.Params.description }}" />
+    <link rel="icon" type="image/svg+xml" href="{{ "assets/favicon.svg" | relURL }}" />
+    <link rel="shortcut icon" href="{{ "assets/favicon.svg" | relURL }}" />
+    <link rel="stylesheet" href="{{ "assets/css/main.css" | relURL }}" />
+  </head>
+  <body class="{{ if .IsHome }}is-home{{ else }}is-page{{ end }}">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    {{ partial "site-header.html" . }}
+
+    <main id="main-content">
+      {{ block "main" . }}{{ .Content }}{{ end }}
+    </main>
+
+    {{ partial "site-footer.html" . }}
+  </body>
+</html>

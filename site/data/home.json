@@ -19,13 +19,13 @@
         "title": "Why zbrew",
         "body": "zbrew keeps the Homebrew workflow familiar, but makes installs faster and the overall setup simpler to reason about.",
         "ctaLabel": "See the repository",
-        "href": "/github"
+        "href": "/github/"
       },
       {
         "title": "Get started",
         "body": "Join the community if you want help getting set up, migrating over, or figuring out the right zbrew workflow for your setup.",
         "ctaLabel": "Join the Discord",
-        "href": "/discord"
+        "href": "/discord/"
       }
     ]
   }

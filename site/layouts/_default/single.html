@@ -1,0 +1,9 @@
+{{ define "main" }}
+  <article class="prose-page">
+    <div class="site-shell">
+      <h1 class="prose-title">{{ .Title }}</h1>
+      {{ with .Description }}<p class="prose-lede">{{ . }}</p>{{ end }}
+      <div class="prose">{{ .Content }}</div>
+    </div>
+  </article>
+{{ end }}

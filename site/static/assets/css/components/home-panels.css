@@ -153,6 +153,18 @@
   white-space: nowrap;
 }
 
+.panel-footnote {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: hsl(50 48% 90% / 0.9);
+}
+
+.panel-footnote a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+
 .bench-card {
   border: var(--border-strong);
   background: var(--color-surface);

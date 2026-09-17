@@ -1,0 +1,10 @@
+{{- /*
+  Site-relative URL for a configured path.
+
+  relURL leaves a leading-slash path untouched, which breaks every internal link
+  when the site is served from a subpath such as /zbrew/. Trim the slash first so
+  relURL prepends the baseURL path.
+
+  Usage: {{ partial "url.html" "/docs/" }}
+*/ -}}
+{{- return (strings.TrimPrefix "/" . | relURL) -}}

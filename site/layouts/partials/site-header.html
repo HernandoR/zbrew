@@ -1,0 +1,12 @@
+<header class="site-header">
+  <div class="site-shell">
+    <nav aria-label="Main navigation">
+      <a href="{{ partial "url.html" "/" }}">{{ site.Title }}</a>
+      <ul>
+        {{ range site.Params.nav }}
+          <li><a href="{{ partial "url.html" .href }}">{{ .label }}</a></li>
+        {{ end }}
+      </ul>
+    </nav>
+  </div>
+</header>
