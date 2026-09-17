@@ -1,7 +1,7 @@
 version: 2
 updates:
   # One cargo workspace, one root lockfile, so a single `/` entry covers
-  # zb_cli, zb_core and zb_io.
+  # zb_core, zb_extract, zb_store, zb_net, zb_installer and zb_cli.
   - package-ecosystem: cargo
     directory: "/"
     schedule:

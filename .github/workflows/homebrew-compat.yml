@@ -13,7 +13,7 @@ on:
   pull_request:
     types: [ opened, synchronize, reopened, labeled ]
     paths:
-      - 'crates/zb_io/src/build/shim.rb'
+      - 'crates/zb_installer/src/build/shim.rb'
       - '.github/workflows/homebrew-compat.yml'
 
 permissions:
