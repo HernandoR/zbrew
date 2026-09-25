@@ -1,4 +1,5 @@
 mod bottle;
+mod cask;
 pub(crate) mod doctor;
 mod outdated;
 mod plan;

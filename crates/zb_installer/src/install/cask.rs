@@ -1,5 +1,13 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use serde_json::Value;
 use zb_core::Error;
+use zb_net::DownloadRequest;
+use zb_store::InstallReason;
+
+use super::Installer;
+use super::bottle::FailedInstallGuard;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CaskBinary {
@@ -190,9 +198,207 @@ fn basename(path: &str) -> Result<String, Error> {
     Ok(name.to_string())
 }
 
+impl Installer {
+    pub(super) async fn install_single_cask(
+        &mut self,
+        token: &str,
+        link: bool,
+    ) -> Result<(), Error> {
+        let cask_json = self.api_client.get_cask(token).await?;
+        let cask = resolve_cask(token, &cask_json)?;
+
+        let blob_path = self
+            .downloader
+            .download_single(
+                DownloadRequest {
+                    url: cask.url.clone(),
+                    sha256: cask.sha256.clone(),
+                    name: cask.install_name.clone(),
+                },
+                None,
+            )
+            .await?;
+
+        let keg_path = self.cellar.keg_path(&cask.install_name, &cask.version);
+        let mut cleanup = FailedInstallGuard::new(
+            &self.linker,
+            &self.cellar,
+            &cask.install_name,
+            &cask.version,
+            &keg_path,
+            link,
+        );
+
+        if zb_extract::is_archive(&blob_path)? {
+            let extracted = self.store.ensure_entry(&cask.sha256, &blob_path)?;
+            stage_cask_binaries(&extracted, &keg_path, &cask)?;
+        } else {
+            stage_raw_cask_binary(&blob_path, &keg_path, &cask)?;
+        }
+
+        let linked_files = if link {
+            self.linker.link_keg(&keg_path)?
+        } else {
+            Vec::new()
+        };
+
+        let tx = self.db.transaction()?;
+        tx.record_install(
+            &cask.install_name,
+            &cask.version,
+            &cask.sha256,
+            InstallReason::Retained,
+        )?;
+        for linked in &linked_files {
+            tx.record_linked_file(
+                &cask.install_name,
+                &cask.version,
+                &linked.link_path.to_string_lossy(),
+                &linked.target_path.to_string_lossy(),
+            )?;
+        }
+        tx.commit()?;
+
+        cleanup.disarm();
+        Ok(())
+    }
+}
+
+fn stage_cask_binaries(
+    extracted_root: &Path,
+    keg_path: &Path,
+    cask: &ResolvedCask,
+) -> Result<(), Error> {
+    let bin_dir = keg_path.join("bin");
+    fs::create_dir_all(&bin_dir).map_err(Error::store("failed to create cask bin dir"))?;
+
+    for binary in &cask.binaries {
+        let source = resolve_cask_source_path(extracted_root, cask, &binary.source)?;
+        if !source.exists() {
+            return Err(Error::InvalidArgument {
+                message: format!(
+                    "cask '{}' binary source '{}' not found in archive",
+                    cask.token, binary.source
+                ),
+            });
+        }
+
+        let target = bin_dir.join(&binary.target);
+        if target.exists() {
+            fs::remove_file(&target)
+                .map_err(Error::store("failed to replace existing cask binary"))?;
+        }
+
+        fs::copy(&source, &target).map_err(|e| Error::StoreCorruption {
+            message: format!("failed to stage cask binary '{}': {e}", binary.target),
+        })?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&target)
+                .map_err(Error::store("failed to read staged cask binary metadata"))?
+                .permissions();
+            if perms.mode() & 0o111 == 0 {
+                perms.set_mode(0o755);
+                fs::set_permissions(&target, perms)
+                    .map_err(Error::store("failed to make staged cask binary executable"))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn stage_raw_cask_binary(
+    blob_path: &Path,
+    keg_path: &Path,
+    cask: &ResolvedCask,
+) -> Result<(), Error> {
+    if cask.binaries.len() != 1 {
+        return Err(Error::InvalidArgument {
+            message: format!(
+                "cask '{}' has {} binary artifacts but the download is a raw binary; expected exactly 1",
+                cask.token,
+                cask.binaries.len()
+            ),
+        });
+    }
+
+    let binary = &cask.binaries[0];
+    let bin_dir = keg_path.join("bin");
+    fs::create_dir_all(&bin_dir).map_err(Error::store("failed to create cask bin dir"))?;
+
+    let target = bin_dir.join(&binary.target);
+    if target.exists() {
+        fs::remove_file(&target).map_err(Error::store("failed to replace existing cask binary"))?;
+    }
+
+    fs::copy(blob_path, &target).map_err(|e| Error::StoreCorruption {
+        message: format!("failed to stage cask binary '{}': {e}", binary.target),
+    })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
+            .map_err(Error::store("failed to make staged cask binary executable"))?;
+    }
+
+    Ok(())
+}
+
+fn resolve_cask_source_path(
+    extracted_root: &Path,
+    cask: &ResolvedCask,
+    source: &str,
+) -> Result<PathBuf, Error> {
+    if source.starts_with("$APPDIR") {
+        return Err(Error::InvalidArgument {
+            message: format!(
+                "cask '{}' uses APPDIR artifacts which are not supported yet",
+                cask.token
+            ),
+        });
+    }
+
+    let mut normalized = source.to_string();
+    let caskroom_prefix = format!("$HOMEBREW_PREFIX/Caskroom/{}/{}/", cask.token, cask.version);
+    if let Some(stripped) = normalized.strip_prefix(&caskroom_prefix) {
+        normalized = stripped.to_string();
+    }
+
+    let source_path = Path::new(&normalized);
+    if source_path.is_absolute() {
+        return Err(Error::InvalidArgument {
+            message: format!(
+                "cask '{}' binary source '{}' must be a relative path",
+                cask.token, source
+            ),
+        });
+    }
+
+    for component in source_path.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err(Error::InvalidArgument {
+                message: format!(
+                    "cask '{}' binary source '{}' cannot contain '..'",
+                    cask.token, source
+                ),
+            });
+        }
+    }
+
+    Ok(extracted_root.join(source_path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::fs;
+
+    use tempfile::TempDir;
 
     #[test]
     fn resolve_cask_uses_platform_variation_url_and_sha() {
@@ -286,5 +492,70 @@ mod tests {
         assert!(msg.contains("no binary artifacts"), "got: {msg}");
         assert!(msg.contains("app"), "got: {msg}");
         assert!(msg.contains("zap"), "got: {msg}");
+    }
+
+    #[test]
+    fn stage_raw_cask_binary_copies_and_marks_executable() {
+        let tmp = TempDir::new().unwrap();
+        let blob_path = tmp.path().join("claude");
+        fs::write(&blob_path, b"#!/bin/sh\necho hello").unwrap();
+
+        let keg_path = tmp.path().join("keg");
+        let cask = ResolvedCask {
+            install_name: "cask:claude-code".to_string(),
+            token: "claude-code".to_string(),
+            version: "1.0.0".to_string(),
+            url: "https://example.com/claude".to_string(),
+            sha256: "aaa".to_string(),
+            binaries: vec![CaskBinary {
+                source: "claude".to_string(),
+                target: "claude".to_string(),
+            }],
+        };
+
+        stage_raw_cask_binary(&blob_path, &keg_path, &cask).unwrap();
+
+        let target = keg_path.join("bin/claude");
+        assert!(target.exists());
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "#!/bin/sh\necho hello"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&target).unwrap().permissions().mode();
+            assert_eq!(mode & 0o755, 0o755);
+        }
+    }
+
+    #[test]
+    fn stage_raw_cask_binary_rejects_multiple_binaries() {
+        let tmp = TempDir::new().unwrap();
+        let blob_path = tmp.path().join("blob");
+        fs::write(&blob_path, b"data").unwrap();
+
+        let keg_path = tmp.path().join("keg");
+        let cask = ResolvedCask {
+            install_name: "cask:multi".to_string(),
+            token: "multi".to_string(),
+            version: "1.0.0".to_string(),
+            url: "https://example.com/multi".to_string(),
+            sha256: "bbb".to_string(),
+            binaries: vec![
+                CaskBinary {
+                    source: "a".to_string(),
+                    target: "a".to_string(),
+                },
+                CaskBinary {
+                    source: "b".to_string(),
+                    target: "b".to_string(),
+                },
+            ],
+        };
+
+        let err = stage_raw_cask_binary(&blob_path, &keg_path, &cask).unwrap_err();
+        assert!(err.to_string().contains("raw binary"));
     }
 }
