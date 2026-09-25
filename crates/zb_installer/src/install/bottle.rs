@@ -224,6 +224,15 @@ impl Installer {
             );
         }
 
+        if unlink && let Err(e) = super::cask::remove_installed_apps(keg_path) {
+            warn!(
+                formula = %name,
+                version = %version,
+                error = %e,
+                "failed to remove installed apps after install error"
+            );
+        }
+
         if let Err(e) = cellar.remove_keg(name, version) {
             warn!(
                 formula = %name,

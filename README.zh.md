@@ -197,6 +197,35 @@ zbx jq --version                # 运行软件包，但不链接、不保留
 
 每个命令都有帮助页面。运行 `zb <command> --help` 即可阅读。
 
+## Cask
+
+Cask 是 Homebrew 中直接分发预编译应用程序、而不是 bottle 的软件包。zbrew 支持
+cask 可以声明的两类构件：
+
+- `binary` —— 命令行可执行文件。它会放进 keg 的 `bin` 目录，并像其他命令一样被
+  链接到 prefix 中。
+- `app` —— `.app` 应用程序包。它会先解包到 keg 中，然后被**移动**到应用程序目录，
+  keg 里只留下一个指向其去处的符号链接。应用程序包必须以真实目录的形式放在 macOS
+  查找它的位置，因为 Launch Services 和 Gatekeeper 并不能可靠地跟随符号链接。
+  `zb uninstall` 正是沿着这个符号链接找到并删除已安装的应用程序。
+
+使用 `--cask`，或者直接用 Homebrew 的 token 来指定一个 cask：
+
+```bash
+zb install --cask docker-desktop
+zb install homebrew/cask/docker-desktop   # 等价写法
+zb uninstall --cask docker-desktop        # 会一并删除 .app 应用程序包
+```
+
+`ZBREW_APPDIR` 用于设置 `.app` 的安装位置。在 macOS 上默认为 `/Applications`，
+在其他系统上默认为 `$ZBREW_PREFIX/Applications`，因为 `.app` 在 macOS 之外没有
+意义。zbrew 绝不会覆盖不是自己安装的应用程序包：如果应用程序目录中该名称已被占用，
+安装会报告冲突并停止，而不会替换你自己放进去的应用程序。
+
+并非所有 cask 都已经可以安装。以 `.dmg` 磁盘映像分发应用程序的 cask 会被拒绝，
+并给出明确说明 —— zbrew 只能解包 tar 和 zip 归档，尚不支持磁盘映像。安装 `pkg`
+安装包的 cask 同样会被拒绝。
+
 ## 手册页 (Manual pages)
 
 `zb` 自带手册页。安装程序会把 `zb.1` 以及每个子命令各自的页面写入 `$ZBREW_MAN/man1`；

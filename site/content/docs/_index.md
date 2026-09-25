@@ -201,6 +201,26 @@ zb bundle dump                     # export installed packages to Brewfile
 zb bundle dump -f out --force      # dump to a custom file (overwrite)
 ```
 
+### Casks
+
+A cask is a Homebrew package that ships a prebuilt application rather than a
+bottle. zbrew installs both artifact kinds a cask can declare: a `binary`,
+which lands in the prefix like any other command, and an `app`, which is moved
+into your app directory as a real `.app` bundle with a symlink left in the keg
+pointing at it. `zb uninstall` follows that symlink to remove the application
+again.
+
+```bash
+zb install --cask docker-desktop   # install a cask by its Homebrew token
+zb uninstall --cask docker-desktop # uninstall it, .app bundle included
+```
+
+`ZBREW_APPDIR` sets where `.app` bundles go — `/Applications` on macOS,
+`$ZBREW_PREFIX/Applications` elsewhere. A name already taken in the app
+directory is reported as a conflict, never overwritten. Casks that ship their
+application in a `.dmg` disk image, or that install a `pkg`, cannot be
+installed yet and say so.
+
 ### Migrate and clean up
 
 ```bash

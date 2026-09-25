@@ -36,6 +36,12 @@ impl Installer {
         let keg_path = self.cellar.keg_path(keg_name, version);
         self.linker.unlink_keg(&keg_path)?;
 
+        // A cask's `.app` bundles live in the app directory, not in the
+        // prefix, so `unlink_keg` cannot see them. They have to go before the
+        // keg does: the symlinks inside it are the only record of where they
+        // were installed (issue #54).
+        super::cask::remove_installed_apps(&keg_path)?;
+
         // `unlink_keg` discovers what to remove by walking the keg, so if the
         // keg files were deleted by hand it finds nothing and the prefix keeps
         // dangling symlinks. `record_uninstall` below drops the `keg_files`

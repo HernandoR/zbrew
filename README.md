@@ -207,6 +207,38 @@ zbx jq --version                # run a package without linking or keeping it
 
 Each command has a help page. Run `zb <command> --help` to read it.
 
+## Casks
+
+A cask is a Homebrew package that ships a prebuilt application rather than a
+bottle. zbrew installs the two artifact kinds a cask can declare:
+
+- `binary` — a command-line executable. It lands in the keg's `bin` directory
+  and is linked into the prefix like any other command.
+- `app` — a `.app` bundle. It is unpacked into the keg, then **moved** into
+  your app directory, and the keg keeps a symlink pointing at where it went.
+  The bundle has to be a real directory where macOS looks for it, because
+  Launch Services and Gatekeeper do not follow a symlinked bundle reliably.
+  That symlink is what `zb uninstall` follows to remove the application again.
+
+Name a cask with `--cask`, or by the token Homebrew uses:
+
+```bash
+zb install --cask docker-desktop
+zb install homebrew/cask/docker-desktop   # the same thing
+zb uninstall --cask docker-desktop        # takes the .app bundle with it
+```
+
+`ZBREW_APPDIR` sets where `.app` bundles go. It defaults to `/Applications` on
+macOS and to `$ZBREW_PREFIX/Applications` elsewhere, since a `.app` means
+nothing off macOS. zbrew never overwrites a bundle it did not install: a name
+already taken in the app directory is reported as a conflict and the install
+stops rather than replacing an application you put there yourself.
+
+Not every cask can be installed yet. A cask that ships its application in a
+`.dmg` disk image is refused with an error saying so — zbrew unpacks tar and
+zip archives, and disk images are not supported. Casks that install `pkg`
+installers are refused for the same reason.
+
 ## Manual pages
 
 `zb` ships its own manual. The installer writes `zb.1` and a page per subcommand to

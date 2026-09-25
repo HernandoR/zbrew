@@ -54,7 +54,28 @@ pub struct Installer {
     linker: Linker,
     pub(crate) db: Database,
     prefix: PathBuf,
+    /// Where a cask's `.app` bundles are installed. See [`default_app_dir`].
+    app_dir: PathBuf,
     locks_dir: PathBuf,
+}
+
+/// Where `.app` bundles from casks are installed.
+///
+/// Homebrew puts them in `/Applications` and lets `HOMEBREW_CASK_OPTS
+/// --appdir` move them elsewhere; `ZBREW_APPDIR` is zbrew's equivalent. A
+/// `.app` is a macOS concept and only macOS has a system-wide `/Applications`
+/// worth writing to, so everywhere else the default is inside the prefix
+/// zbrew already owns.
+fn default_app_dir(prefix: &Path) -> PathBuf {
+    if let Some(configured) = std::env::var_os("ZBREW_APPDIR") {
+        return PathBuf::from(configured);
+    }
+
+    if cfg!(target_os = "macos") {
+        PathBuf::from("/Applications")
+    } else {
+        prefix.join("Applications")
+    }
 }
 
 #[derive(Debug)]
@@ -147,9 +168,23 @@ impl Installer {
             cellar,
             linker,
             db,
+            app_dir: default_app_dir(&prefix),
             prefix,
             locks_dir,
         }
+    }
+
+    /// Install a cask's `.app` bundles somewhere other than
+    /// [`default_app_dir`].
+    ///
+    /// Test-only. In a real run the app directory comes from `ZBREW_APPDIR`
+    /// or the platform default; tests need it injected instead, because an
+    /// environment variable is process-global and they run in parallel.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_app_dir(mut self, app_dir: PathBuf) -> Self {
+        self.app_dir = app_dir;
+        self
     }
 
     pub fn clear_api_cache(&self) -> Result<usize, Error> {
@@ -419,6 +454,7 @@ pub fn create_installer(
         linker,
         db,
         prefix: prefix.to_path_buf(),
+        app_dir: default_app_dir(prefix),
         locks_dir,
     })
 }
@@ -725,6 +761,104 @@ mod tests {
         assert!(installer.db.get_installed("survivor").is_some());
         assert!(installer.db.get_installed("casualtyone").is_none());
         assert!(installer.db.get_installed("casualtytwo").is_none());
+    }
+
+    /// An `app` cask is installed end to end: the bundle is unpacked, moved
+    /// into the app directory as a real directory, and the keg keeps a
+    /// symlink to it. Uninstalling takes the bundle with it (issues #54, #55).
+    #[tokio::test]
+    async fn an_app_cask_is_installed_into_the_app_dir_and_removed_again() {
+        let env = TestEnv::new().await;
+
+        let archive = create_cask_app_tarball("Test.app");
+        let archive_sha = sha256_hex(&archive);
+        Mock::given(method("GET"))
+            .and(path("/cask/testapp.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"token":"testapp","version":"1.0.0","url":"{uri}/downloads/testapp.tar.gz",
+                    "sha256":"{archive_sha}","artifacts":[{{"app":["Test.app"]}}]}}"#,
+                uri = env.uri()
+            )))
+            .mount(&env.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/downloads/testapp.tar.gz"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(archive))
+            .mount(&env.server)
+            .await;
+
+        let mut installer = env.cask_installer();
+        let outcome = installer
+            .install(&["cask:testapp".to_string()], true)
+            .await
+            .unwrap();
+
+        assert!(outcome.failed.is_empty(), "failed: {:?}", outcome.failed);
+        assert!(installer.db.get_installed("cask:testapp").is_some());
+
+        let installed = env.app_dir().join("Test.app");
+        assert!(
+            installed.join("Contents/Info.plist").exists(),
+            "the bundle must be unpacked into the app directory"
+        );
+        assert!(
+            !installed.is_symlink(),
+            "macOS will not launch a bundle reliably through a symlink"
+        );
+
+        installer.uninstall("cask:testapp").unwrap();
+
+        assert!(!installer.is_installed("cask:testapp"));
+        assert!(
+            !installed.exists(),
+            "uninstalling the cask must take its app bundle with it"
+        );
+        assert!(
+            env.app_dir().exists(),
+            "the app directory itself belongs to the user"
+        );
+    }
+
+    /// Installing the same app cask twice replaces its own bundle instead of
+    /// tripping over it as if it belonged to somebody else.
+    #[tokio::test]
+    async fn reinstalling_an_app_cask_replaces_the_bundle_it_installed_before() {
+        let env = TestEnv::new().await;
+
+        let archive = create_cask_app_tarball("Test.app");
+        let archive_sha = sha256_hex(&archive);
+        Mock::given(method("GET"))
+            .and(path("/cask/testapp.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"token":"testapp","version":"1.0.0","url":"{uri}/downloads/testapp.tar.gz",
+                    "sha256":"{archive_sha}","artifacts":[{{"app":["Test.app"]}}]}}"#,
+                uri = env.uri()
+            )))
+            .mount(&env.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/downloads/testapp.tar.gz"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(archive))
+            .mount(&env.server)
+            .await;
+
+        let mut installer = env.cask_installer();
+        installer
+            .install(&["cask:testapp".to_string()], true)
+            .await
+            .unwrap();
+
+        let outcome = installer
+            .install(&["cask:testapp".to_string()], true)
+            .await
+            .unwrap();
+
+        assert!(
+            outcome.failed.is_empty(),
+            "a reinstall must not conflict with its own bundle: {:?}",
+            outcome.failed
+        );
+        assert!(env.app_dir().join("Test.app/Contents/Info.plist").exists());
     }
 
     /// Casks and formulas are independent packages. A formula that fails must
