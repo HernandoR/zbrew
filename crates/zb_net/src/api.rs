@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::cache::{ApiCache, CacheEntry};
+use crate::mirror::MirrorConfig;
 use crate::suggest::rank_formula_suggestions;
 use crate::tap_formula::{parse_tap_formula_ref, parse_tap_formula_ruby};
 use futures_util::stream::{self, StreamExt};
@@ -70,8 +71,11 @@ struct FormulaSuggestionEntry {
 
 #[derive(Debug)]
 pub struct ApiClient {
-    base_url: String,
-    cask_base_url: String,
+    /// Formula metadata bases in preference order: a mirror, if one is
+    /// configured, then the upstream default. Never empty.
+    base_urls: Vec<String>,
+    /// Cask metadata bases, in the same order and with the same guarantee.
+    cask_base_urls: Vec<String>,
     tap_raw_base_url: String,
     client: reqwest::Client,
     cache: Option<ApiCache>,
@@ -80,10 +84,33 @@ pub struct ApiClient {
 }
 
 impl ApiClient {
-    const DEFAULT_BASE_URL: &'static str = "https://formulae.brew.sh/api/formula";
-
+    /// A client pointed at the upstream Homebrew API, ignoring the
+    /// environment. Use `from_env` for the client zbrew actually installs
+    /// with; this one exists for tests and for callers that must not be
+    /// redirected by a mirror.
     pub fn new() -> Self {
-        Self::build_client(Self::DEFAULT_BASE_URL.to_string())
+        Self::build_client(
+            MirrorConfig::default().formula_api_bases(),
+            MirrorConfig::default().cask_api_bases(),
+        )
+    }
+
+    /// Build a client from the process environment.
+    ///
+    /// `ZBREW_API_URL` is zbrew's own override and names the formula base
+    /// directly, so it wins outright and gets no upstream fallback — a user
+    /// who pinned an exact URL does not want requests silently leaking to
+    /// `formulae.brew.sh`. Otherwise the Homebrew mirror variables decide,
+    /// and those *do* fall back, as Homebrew's do.
+    pub fn from_env() -> Result<Self, Error> {
+        let mirrors = MirrorConfig::shared();
+        match std::env::var("ZBREW_API_URL") {
+            Ok(url) => Self::with_base_url(url),
+            Err(_) => Ok(Self::build_client(
+                mirrors.formula_api_bases(),
+                mirrors.cask_api_bases(),
+            )),
+        }
     }
 
     /// Rejects non-http(s) schemes and URLs containing credentials.
@@ -105,10 +132,15 @@ impl ApiClient {
             });
         }
 
-        Ok(Self::build_client(base_url))
+        Ok(Self::build_client(
+            vec![base_url],
+            MirrorConfig::shared().cask_api_bases(),
+        ))
     }
 
-    fn build_client(base_url: String) -> Self {
+    fn build_client(base_urls: Vec<String>, cask_base_urls: Vec<String>) -> Self {
+        debug_assert!(!base_urls.is_empty() && !cask_base_urls.is_empty());
+
         let client = reqwest::Client::builder()
             .user_agent("zbrew/0.1")
             .pool_max_idle_per_host(20)
@@ -117,8 +149,8 @@ impl ApiClient {
             .expect("failed to build HTTP client");
 
         Self {
-            base_url,
-            cask_base_url: "https://formulae.brew.sh/api/cask".to_string(),
+            base_urls,
+            cask_base_urls,
             tap_raw_base_url: "https://raw.githubusercontent.com".to_string(),
             client,
             cache: None,
@@ -139,8 +171,15 @@ impl ApiClient {
 
     #[cfg(any(test, feature = "test-util"))]
     pub fn with_cask_base_url(mut self, cask_base_url: String) -> Self {
-        self.cask_base_url = cask_base_url;
+        self.cask_base_urls = vec![cask_base_url];
         self
+    }
+
+    /// Point the client at a mirror base followed by a fallback base, the
+    /// shape `from_env` produces when `HOMEBREW_API_DOMAIN` is set.
+    #[cfg(test)]
+    fn with_base_urls(base_urls: Vec<String>) -> Self {
+        Self::build_client(base_urls, MirrorConfig::default().cask_api_bases())
     }
 
     pub fn with_cache(mut self, cache: ApiCache) -> Self {
@@ -192,23 +231,7 @@ impl ApiClient {
             return Ok(dest);
         }
 
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(Error::network("failed to fetch formula rb"))?;
-
-        if !response.status().is_success() {
-            return Err(Error::NetworkFailure {
-                message: format!("formula rb fetch returned HTTP {}", response.status()),
-            });
-        }
-
-        let body = response
-            .text()
-            .await
-            .map_err(Error::network("failed to read formula rb response"))?;
+        let body = self.fetch_formula_rb_body(url).await?;
 
         verify_sha256_bytes(body.as_bytes(), expected_sha256)
             .map_err(|e| Self::map_formula_rb_checksum_error(e, ruby_source_path, "network"))?;
@@ -227,6 +250,39 @@ impl ApiClient {
         std::fs::write(&dest, body.as_bytes()).map_err(Error::file("failed to write rb file"))?;
 
         Ok(dest)
+    }
+
+    /// Fetch a formula's Ruby source, honouring any configured mirror.
+    ///
+    /// `HOMEBREW_ARTIFACT_DOMAIN` prefixes *all* download URLs, formula
+    /// sources included, so the mirror is tried first and the upstream URL
+    /// only afterwards.
+    async fn fetch_formula_rb_body(&self, url: &str) -> Result<String, Error> {
+        let mut last_error = None;
+
+        for candidate in MirrorConfig::shared().download_candidates(url) {
+            let response = match self.client.get(&candidate).send().await {
+                Ok(response) => response,
+                Err(e) => {
+                    last_error = Some(Error::network("failed to fetch formula rb")(e));
+                    continue;
+                }
+            };
+
+            if !response.status().is_success() {
+                last_error = Some(Error::NetworkFailure {
+                    message: format!("formula rb fetch returned HTTP {}", response.status()),
+                });
+                continue;
+            }
+
+            return response
+                .text()
+                .await
+                .map_err(Error::network("failed to read formula rb response"));
+        }
+
+        Err(last_error.expect("download_candidates is never empty"))
     }
 
     fn map_formula_rb_checksum_error(err: Error, ruby_source_path: &str, source: &str) -> Error {
@@ -313,8 +369,25 @@ impl ApiClient {
         }
     }
 
+    /// Try each metadata base in turn, returning the last failure.
+    ///
+    /// A mirror that is stale, half-synced or briefly down answers with a 404
+    /// or a 5xx rather than the formula, and Homebrew treats both the same
+    /// way: move on to the next base. Only when every base has failed does
+    /// the caller see an error.
     async fn fetch_formula_json(&self, name: &str) -> Result<String, Error> {
-        let url = format!("{}/{}.json", self.base_url, name);
+        let mut last_error = None;
+        for base in &self.base_urls {
+            match self.fetch_formula_json_from(base, name).await {
+                Ok(body) => return Ok(body),
+                Err(e) => last_error = Some(e),
+            }
+        }
+        Err(last_error.expect("base_urls is never empty"))
+    }
+
+    async fn fetch_formula_json_from(&self, base_url: &str, name: &str) -> Result<String, Error> {
+        let url = format!("{base_url}/{name}.json");
 
         match self.cached_get(&url).await? {
             CachedGetResult::Cached(body) => Ok(body),
@@ -353,7 +426,18 @@ impl ApiClient {
     }
 
     pub async fn get_all_formulas_raw(&self) -> Result<String, Error> {
-        let url = format!("{}.json", self.base_url);
+        let mut last_error = None;
+        for base in &self.base_urls {
+            match self.get_all_formulas_raw_from(base).await {
+                Ok(body) => return Ok(body),
+                Err(e) => last_error = Some(e),
+            }
+        }
+        Err(last_error.expect("base_urls is never empty"))
+    }
+
+    async fn get_all_formulas_raw_from(&self, base_url: &str) -> Result<String, Error> {
+        let url = format!("{base_url}.json");
 
         match self.cached_get(&url).await? {
             CachedGetResult::Cached(body) => Ok(body),
@@ -488,7 +572,22 @@ impl ApiClient {
     }
 
     pub async fn get_cask(&self, token: &str) -> Result<serde_json::Value, Error> {
-        let url = format!("{}/{}.json", self.cask_base_url, token);
+        let mut last_error = None;
+        for base in &self.cask_base_urls {
+            match self.get_cask_from(base, token).await {
+                Ok(value) => return Ok(value),
+                Err(e) => last_error = Some(e),
+            }
+        }
+        Err(last_error.expect("cask_base_urls is never empty"))
+    }
+
+    async fn get_cask_from(
+        &self,
+        cask_base_url: &str,
+        token: &str,
+    ) -> Result<serde_json::Value, Error> {
+        let url = format!("{cask_base_url}/{token}.json");
         let response = self
             .client
             .get(&url)
@@ -714,6 +813,83 @@ mod tests {
 
         assert_eq!(formula.name, "foo");
         assert_eq!(formula.versions.stable, "1.2.3");
+    }
+
+    #[tokio::test]
+    async fn a_failing_api_mirror_falls_back_to_the_next_base() {
+        let mirror = MockServer::start().await;
+        let upstream = MockServer::start().await;
+        let fixture = include_str!("../../zb_core/fixtures/formula_foo.json");
+
+        Mock::given(method("GET"))
+            .and(path("/foo.json"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&mirror)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/foo.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(fixture))
+            .mount(&upstream)
+            .await;
+
+        let client = ApiClient::with_base_urls(vec![mirror.uri(), upstream.uri()]);
+
+        assert_eq!(client.get_formula("foo").await.unwrap().name, "foo");
+    }
+
+    /// A mirror that has not finished syncing answers 404 for a formula that
+    /// exists upstream. Homebrew treats that as "unavailable at the mirror",
+    /// not as "no such formula", and so must we — otherwise a half-synced
+    /// mirror makes packages look deleted.
+    #[tokio::test]
+    async fn a_formula_missing_from_the_mirror_is_still_found_upstream() {
+        let mirror = MockServer::start().await;
+        let upstream = MockServer::start().await;
+        let fixture = include_str!("../../zb_core/fixtures/formula_foo.json");
+
+        Mock::given(method("GET"))
+            .and(path("/foo.json"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mirror)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/foo.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(fixture))
+            .mount(&upstream)
+            .await;
+
+        let client = ApiClient::with_base_urls(vec![mirror.uri(), upstream.uri()]);
+
+        assert_eq!(client.get_formula("foo").await.unwrap().name, "foo");
+    }
+
+    /// The error the user sees must come from the last base tried, so a
+    /// genuinely unknown formula still reports as missing rather than as a
+    /// mirror outage.
+    #[tokio::test]
+    async fn a_formula_missing_everywhere_reports_as_missing() {
+        let mirror = MockServer::start().await;
+        let upstream = MockServer::start().await;
+
+        for server in [&mirror, &upstream] {
+            Mock::given(method("GET"))
+                .and(path("/nonexistent.json"))
+                .respond_with(ResponseTemplate::new(404))
+                .mount(server)
+                .await;
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(404))
+                .mount(server)
+                .await;
+        }
+
+        let client = ApiClient::with_base_urls(vec![mirror.uri(), upstream.uri()]);
+        let err = client.get_formula("nonexistent").await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::MissingFormula { name } if name == "nonexistent"
+        ));
     }
 
     #[tokio::test]

@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Notify, RwLock, Semaphore};
 use tracing::warn;
 
+use crate::mirror::MirrorConfig;
 use crate::tls::shared_tls_config;
 use zb_core::Error;
 use zb_core::progress::InstallProgress;
@@ -23,31 +24,6 @@ use super::{
     CHUNKED_DOWNLOAD_THRESHOLD, DownloadProgressCallback, GLOBAL_DOWNLOAD_CONCURRENCY,
     RACING_CONNECTIONS, RACING_STAGGER_MS,
 };
-
-fn get_alternate_urls(primary_url: &str) -> Vec<String> {
-    let mut alternates = Vec::new();
-
-    if let Ok(mirrors) = std::env::var("HOMEBREW_BOTTLE_MIRRORS") {
-        for mirror in mirrors.split(',') {
-            let mirror = mirror.trim();
-            if !mirror.is_empty()
-                && let Some(alt) = transform_url_to_mirror(primary_url, mirror)
-            {
-                alternates.push(alt);
-            }
-        }
-    }
-
-    alternates
-}
-
-fn transform_url_to_mirror(url: &str, mirror_domain: &str) -> Option<String> {
-    if url.contains("ghcr.io") {
-        Some(url.replace("ghcr.io", mirror_domain))
-    } else {
-        None
-    }
-}
 
 pub(crate) struct Downloader {
     client: reqwest::Client,
@@ -121,9 +97,13 @@ impl Downloader {
             return Ok(self.blob_cache.blob_path(expected_sha256));
         }
 
-        let alternates = get_alternate_urls(url);
+        // Mirror first, upstream last: `download_with_racing` treats the head
+        // of this list as the primary and the tail as fallbacks, which is the
+        // preference order `MirrorConfig` already encodes.
+        let candidates = MirrorConfig::shared().download_candidates(url);
+        let (primary, alternates) = candidates.split_first().expect("always at least one URL");
 
-        self.download_with_racing(url, &alternates, expected_sha256, name, progress)
+        self.download_with_racing(primary, alternates, expected_sha256, name, progress)
             .await
     }
 

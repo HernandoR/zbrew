@@ -267,6 +267,42 @@ zbrew adds three things of its own:
 zbrew is experimental. Run zbrew and Homebrew together on the same machine. Do
 **not** delete Homebrew and replace it with zbrew, unless you accept the risk.
 
+### Mirrors
+
+zbrew reads the same mirror environment variables as Homebrew, so a shell
+profile that already points `brew` at a mirror points `zb` at it too.
+
+| Variable | Effect | Default |
+|---|---|---|
+| `HOMEBREW_API_DOMAIN` | Base URL for formula and cask metadata | `https://formulae.brew.sh/api` |
+| `HOMEBREW_BOTTLE_DOMAIN` | Base URL for bottles and their manifests | `https://ghcr.io/v2/homebrew/core` |
+| `HOMEBREW_ARTIFACT_DOMAIN` | Prefix for every download, bottles included | — |
+| `HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK` | Fail instead of trying the default URL | unset |
+
+A mirror is tried first and the default is the fallback. If the mirror is
+down, out of date, or missing a file, zbrew still finds the package. Set
+`HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK` when a request must never leave the
+mirror.
+
+`HOMEBREW_ARTIFACT_DOMAIN` prefixes an ordinary download URL whole, so
+`https://example.com/foo.tar.gz` becomes
+`$HOMEBREW_ARTIFACT_DOMAIN/https://example.com/foo.tar.gz`. A bottle URL is
+different: the registry host is replaced, so
+`https://ghcr.io/v2/homebrew/core/jq/manifests/1.7` becomes
+`$HOMEBREW_ARTIFACT_DOMAIN/v2/homebrew/core/jq/manifests/1.7`. If the value
+already contains a `/v2` path, that segment is not repeated.
+
+An example that uses one mirror for both metadata and bottles:
+
+```bash
+export HOMEBREW_API_DOMAIN=https://mirrors.example.edu/homebrew-bottles/api
+export HOMEBREW_BOTTLE_DOMAIN=https://mirrors.example.edu/homebrew-bottles
+```
+
+zbrew also keeps its own `ZBREW_API_URL`, which names the formula metadata
+base directly. It wins over `HOMEBREW_API_DOMAIN` and gets no fallback.
+
+
 ## How it works
 
 `zb install <package>` does these steps:

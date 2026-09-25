@@ -390,11 +390,7 @@ pub fn create_installer(
     let api_cache =
         ApiCache::open(&api_cache_path).map_err(Error::store("failed to open API cache"))?;
 
-    let api_client = match std::env::var("ZBREW_API_URL") {
-        Ok(url) => ApiClient::with_base_url(url)?,
-        Err(_) => ApiClient::new(),
-    }
-    .with_cache(api_cache);
+    let api_client = ApiClient::from_env()?.with_cache(api_cache);
 
     let blob_cache =
         BlobCache::new(&root.join("cache")).map_err(Error::store("failed to create blob cache"))?;
