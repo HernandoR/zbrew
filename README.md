@@ -302,11 +302,13 @@ different: the registry host is replaced, so
 `$HOMEBREW_ARTIFACT_DOMAIN/v2/homebrew/core/jq/manifests/1.7`. If the value
 already contains a `/v2` path, that segment is not repeated.
 
-An example that uses one mirror for both metadata and bottles:
+An example that uses one mirror for both metadata and bottles. The bottle
+mirror must proxy the GitHub Packages registry, which is what
+`HOMEBREW_ARTIFACT_DOMAIN` addresses:
 
 ```bash
 export HOMEBREW_API_DOMAIN=https://mirrors.example.edu/homebrew-bottles/api
-export HOMEBREW_BOTTLE_DOMAIN=https://mirrors.example.edu/homebrew-bottles
+export HOMEBREW_ARTIFACT_DOMAIN=https://mirrors.example.edu/v2/ghcr-io
 ```
 
 zbrew also keeps its own `ZBREW_API_URL`, which names the formula metadata

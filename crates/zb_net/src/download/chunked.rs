@@ -94,9 +94,18 @@ async fn download_chunk(
     let range_header = format!("bytes={}-{}", chunk.offset, chunk.offset + chunk.size - 1);
 
     let mut last_error = None;
+    // A token this loop mints is used directly rather than read back out of
+    // the cache. The cache read derives its key from the URL, which only
+    // works for a literal ghcr.io URL -- against a mirror that issues its own
+    // challenge the read would miss every time, so each retry would go out
+    // unauthenticated and the chunk would fail after exhausting them.
+    let mut minted_token: Option<String> = None;
 
     for attempt in 0..=MAX_CHUNK_RETRIES {
-        let cached_token = get_cached_token_for_url_internal(ctx.token_cache, ctx.url).await;
+        let cached_token = match &minted_token {
+            Some(token) => Some(token.clone()),
+            None => get_cached_token_for_url_internal(ctx.token_cache, ctx.url).await,
+        };
 
         let mut request = ctx
             .client
@@ -130,7 +139,8 @@ async fn download_chunk(
                     )
                     .await
                     {
-                        Ok(_new_token) => {
+                        Ok(new_token) => {
+                            minted_token = Some(new_token);
                             last_error = Some(Error::NetworkFailure {
                                 message: "token expired, retrying with new token".to_string(),
                             });

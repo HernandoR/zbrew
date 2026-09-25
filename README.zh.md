@@ -286,11 +286,12 @@ zbrew 优先使用镜像，默认地址作为回退，因此镜像宕机、落�
 `$HOMEBREW_ARTIFACT_DOMAIN/v2/homebrew/core/jq/manifests/1.7`。若该变量的值本身
 已含 `/v2` 路径，则不会重复该段。
 
-元数据与 bottle 使用同一个镜像的示例：
+元数据与 bottle 使用同一个镜像的示例。bottle 镜像需要能代理 GitHub Packages
+registry，这正是 `HOMEBREW_ARTIFACT_DOMAIN` 负责的场景：
 
 ```bash
 export HOMEBREW_API_DOMAIN=https://mirrors.example.edu/homebrew-bottles/api
-export HOMEBREW_BOTTLE_DOMAIN=https://mirrors.example.edu/homebrew-bottles
+export HOMEBREW_ARTIFACT_DOMAIN=https://mirrors.example.edu/v2/ghcr-io
 ```
 
 zbrew 自己的 `ZBREW_API_URL` 仍然保留，它直接指定 formula 元数据的基地址。
