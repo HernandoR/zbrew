@@ -6,6 +6,7 @@ use std::time::Instant;
 use super::install;
 use crate::cli::BundleCommands;
 use crate::ui::StdUi;
+use crate::utils::normalize_formula_name;
 
 pub async fn execute(
     installer: &mut zb_installer::Installer,
@@ -19,8 +20,109 @@ pub async fn execute(
         BundleCommands::Install { file, no_link } => {
             install_from_file(installer, &file, no_link, ui).await
         }
+        BundleCommands::Check { file } => check_file(installer, &file),
         BundleCommands::Dump { file, force } => dump_to_file(installer, &file, force),
     }
+}
+
+/// The packages a Brewfile asks for.
+struct Manifest {
+    /// Install names, normalised the way `zb install` normalises them, so a
+    /// `homebrew/cask/docker` line and a `cask "docker"` line are one package.
+    entries: Vec<String>,
+}
+
+impl Manifest {
+    fn load(path: &Path) -> Result<Self, zb_core::Error> {
+        let contents = std::fs::read_to_string(path).map_err(|e| zb_core::Error::FileError {
+            message: format!("failed to read manifest {}: {}", path.display(), e),
+        })?;
+
+        let mut entries = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        for line in contents.lines() {
+            // Handle inline comments by splitting on '#' and taking the first part
+            let entry = line.split('#').next().unwrap_or("").trim();
+            if entry.is_empty() {
+                continue;
+            }
+
+            if let Some(parsed) = parse_brewfile_entry(entry)
+                && seen.insert(parsed.clone())
+            {
+                entries.push(parsed);
+            }
+        }
+
+        if entries.is_empty() {
+            return Err(zb_core::Error::FileError {
+                message: format!("manifest {} did not contain any formulas", path.display()),
+            });
+        }
+
+        Ok(Self { entries })
+    }
+
+    /// Split the manifest into what is already installed and what is not.
+    ///
+    /// A keg `zb run` left behind counts as missing: it is not something the
+    /// user installed, and `zb gc` will delete it, so a Brewfile that names it
+    /// is not satisfied.
+    fn partition_installed(&self, installer: &zb_installer::Installer) -> Partitioned<'_> {
+        let mut satisfied = Vec::new();
+        let mut missing = Vec::new();
+
+        for entry in &self.entries {
+            let name = normalize_formula_name(entry).unwrap_or_else(|_| entry.clone());
+            match installer.get_installed(&name) {
+                Some(keg) if !keg.reason.is_transient() => satisfied.push(entry.as_str()),
+                _ => missing.push(entry.as_str()),
+            }
+        }
+
+        Partitioned { satisfied, missing }
+    }
+}
+
+struct Partitioned<'a> {
+    satisfied: Vec<&'a str>,
+    missing: Vec<&'a str>,
+}
+
+/// `brew bundle check`: say whether the Brewfile is satisfied and let the exit
+/// code carry the answer, so it can gate a `.envrc` or a CI step.
+fn check_file(
+    installer: &zb_installer::Installer,
+    manifest_path: &Path,
+) -> Result<(), zb_core::Error> {
+    let manifest = Manifest::load(manifest_path)?;
+    let Partitioned { missing, .. } = manifest.partition_installed(installer);
+
+    if missing.is_empty() {
+        println!(
+            "{} The Brewfile's dependencies are satisfied.",
+            style("==>").cyan().bold()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} {} missing from {}:",
+        style("==>").cyan().bold(),
+        style(missing.len()).yellow().bold(),
+        manifest_path.display()
+    );
+    for entry in &missing {
+        println!("  {}", style(entry).bold());
+    }
+
+    Err(zb_core::Error::InvalidArgument {
+        message: format!(
+            "{} of the Brewfile's dependencies are not installed; run zb bundle install",
+            missing.len()
+        ),
+    })
 }
 
 async fn install_from_file(
@@ -29,17 +131,39 @@ async fn install_from_file(
     no_link: bool,
     ui: &mut StdUi,
 ) -> Result<(), zb_core::Error> {
-    let formulas = load_manifest(manifest_path)?;
+    let manifest = Manifest::load(manifest_path)?;
+    // Installing what is already there costs an unpack and a relink per
+    // package, which is what made `zb bundle` in an `.envrc` redo its work on
+    // every directory change. `brew bundle install` skips them too.
+    let Partitioned { satisfied, missing } = manifest.partition_installed(installer);
+
+    if !satisfied.is_empty() {
+        println!(
+            "{} {} already installed, skipping",
+            style("==>").cyan().bold(),
+            style(satisfied.len()).green().bold()
+        );
+    }
+
+    if missing.is_empty() {
+        println!(
+            "{} {} is already satisfied.",
+            style("==>").cyan().bold(),
+            manifest_path.display()
+        );
+        return Ok(());
+    }
+
     println!(
         "{} Installing {} formulas from {}...",
         style("==>").cyan().bold(),
-        style(formulas.len()).green().bold(),
+        style(missing.len()).green().bold(),
         manifest_path.display()
     );
 
     let start = Instant::now();
-    for formula in formulas {
-        install::execute(installer, vec![formula], no_link, false, ui).await?;
+    for formula in missing {
+        install::execute(installer, vec![formula.to_string()], no_link, false, ui).await?;
     }
 
     println!(
@@ -91,37 +215,6 @@ fn dump_to_file(
     Ok(())
 }
 
-fn load_manifest(path: &Path) -> Result<Vec<String>, zb_core::Error> {
-    let contents = std::fs::read_to_string(path).map_err(|e| zb_core::Error::FileError {
-        message: format!("failed to read manifest {}: {}", path.display(), e),
-    })?;
-
-    let mut formulas = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-
-    for line in contents.lines() {
-        // Handle inline comments by splitting on '#' and taking the first part
-        let entry = line.split('#').next().unwrap_or("").trim();
-        if entry.is_empty() {
-            continue;
-        }
-
-        if let Some(parsed) = parse_brewfile_entry(entry)
-            && seen.insert(parsed.clone())
-        {
-            formulas.push(parsed);
-        }
-    }
-
-    if formulas.is_empty() {
-        return Err(zb_core::Error::FileError {
-            message: format!("manifest {} did not contain any formulas", path.display()),
-        });
-    }
-
-    Ok(formulas)
-}
-
 fn parse_brewfile_entry(line: &str) -> Option<String> {
     if line.starts_with("tap ") {
         return None;
@@ -158,6 +251,120 @@ fn parse_quoted_directive<'a>(line: &'a str, directive: &str) -> Option<&'a str>
 mod tests {
     use super::*;
     use std::io::Write;
+    use tempfile::TempDir;
+    use wiremock::MockServer;
+
+    use crate::commands::test_support::{make_installer, mount_formula};
+
+    fn load_manifest(path: &Path) -> Result<Vec<String>, zb_core::Error> {
+        Manifest::load(path).map(|manifest| manifest.entries)
+    }
+
+    fn brewfile(dir: &TempDir, contents: &str) -> PathBuf {
+        let path = dir.path().join("Brewfile");
+        std::fs::write(&path, contents).unwrap();
+        path
+    }
+
+    /// `brew bundle check` is meant to gate a script, so the exit code has to
+    /// carry the answer: success when satisfied, failure when not.
+    #[tokio::test]
+    async fn check_succeeds_only_once_every_entry_is_installed() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_formula(&server, "checkone", "1.0.0", &[]).await;
+        mount_formula(&server, "checktwo", "1.0.0", &[]).await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        let mut ui = StdUi::new();
+        let manifest = brewfile(&tmp, "brew \"checkone\"\nbrew \"checktwo\"\n");
+
+        let err = check_file(&installer, &manifest).unwrap_err();
+        assert!(
+            err.to_string().contains("2 of the Brewfile"),
+            "the failure should count what is missing, got: {err}"
+        );
+
+        install::execute(
+            &mut installer,
+            vec!["checkone".to_string(), "checktwo".to_string()],
+            false,
+            false,
+            &mut ui,
+        )
+        .await
+        .unwrap();
+
+        check_file(&installer, &manifest).expect("every entry is installed");
+    }
+
+    /// A dependency pulled in by another package still satisfies a Brewfile
+    /// line naming it -- `brew bundle check` asks whether the package is
+    /// present, not why.
+    #[tokio::test]
+    async fn check_counts_a_dependency_as_satisfied() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_formula(&server, "checkdep", "1.0.0", &[]).await;
+        mount_formula(&server, "checkroot", "1.0.0", &["checkdep"]).await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        let mut ui = StdUi::new();
+
+        install::execute(
+            &mut installer,
+            vec!["checkroot".to_string()],
+            false,
+            false,
+            &mut ui,
+        )
+        .await
+        .unwrap();
+
+        let manifest = brewfile(&tmp, "brew \"checkdep\"\n");
+        check_file(&installer, &manifest).expect("checkdep is installed as a dependency");
+    }
+
+    /// The reason `zb bundle` was unusable in an `.envrc`: every invocation
+    /// reinstalled the whole manifest. A second run must reach the installer
+    /// for nothing, which is observable here because the mock serves each
+    /// formula's metadata only while the test still has it mounted.
+    #[tokio::test]
+    async fn a_second_install_skips_what_is_already_installed() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_formula(&server, "bundleskip", "1.0.0", &[]).await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        let mut ui = StdUi::new();
+        let manifest = brewfile(&tmp, "brew \"bundleskip\"\n");
+
+        install_from_file(&mut installer, &manifest, false, &mut ui)
+            .await
+            .unwrap();
+        assert!(installer.is_installed("bundleskip"));
+
+        let requests_after_first = server.received_requests().await.unwrap().len();
+
+        install_from_file(&mut installer, &manifest, false, &mut ui)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            requests_after_first,
+            "a satisfied Brewfile must not send the API or the bottle server anything"
+        );
+    }
 
     #[test]
     fn load_manifest_parses_entries_ignoring_whitespace_and_comments() {
