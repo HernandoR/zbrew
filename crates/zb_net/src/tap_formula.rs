@@ -428,12 +428,17 @@ fn parse_keg_only(source: &str) -> (KegOnly, Option<KegOnlyReason>) {
         return (KegOnly::No, None);
     };
 
+    // `KegOnly::Reason` is rendered verbatim as the user-visible link-skip
+    // reason, and the JSON API sends `keg_only: true` for the symbol forms --
+    // so mapping the symbol to `Yes` keeps a recovered formula reporting the
+    // same prose as one fetched from the API instead of a raw Ruby symbol.
+    // The symbol itself stays in `keg_only_reason`, which is where
+    // `is_macos_specific` reads it.
     if let Some(symbol) = captures.get(1) {
-        let reason = format!(":{}", symbol.as_str());
         return (
-            KegOnly::Reason(reason.clone()),
+            KegOnly::Yes,
             Some(KegOnlyReason {
-                reason,
+                reason: format!(":{}", symbol.as_str()),
                 explanation: String::new(),
             }),
         );
@@ -792,8 +797,10 @@ mod tests {
     /// prefix, which is the one thing keg-only exists to prevent.
     #[test]
     fn keg_only_is_read_from_the_formula_source() {
+        // `Yes`, not `Reason`: the API sends `keg_only: true` for the symbol
+        // forms, and `Reason`'s payload is printed to the user verbatim.
         let (keg_only, reason) = parse_keg_only("  keg_only :provided_by_macos\n");
-        assert_eq!(keg_only, KegOnly::Reason(":provided_by_macos".to_string()));
+        assert_eq!(keg_only, KegOnly::Yes);
         assert!(reason.unwrap().is_macos_specific());
 
         let (keg_only, reason) = parse_keg_only("  keg_only \"openssl/libressl conflict\"\n");
