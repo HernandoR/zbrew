@@ -1,16 +1,25 @@
 //! Homebrew-compatible mirror configuration.
 //!
 //! Users behind a slow or blocked path to GitHub point Homebrew at a mirror
-//! with `HOMEBREW_API_DOMAIN`, `HOMEBREW_BOTTLE_DOMAIN` and
-//! `HOMEBREW_ARTIFACT_DOMAIN`. Reading the same variables means an existing
-//! `~/.zshrc` that already configures `brew` configures `zb` too, with no
-//! second set of names to learn.
+//! with `HOMEBREW_API_DOMAIN` and `HOMEBREW_ARTIFACT_DOMAIN`. Reading the
+//! same variables means an existing `~/.zshrc` that already configures `brew`
+//! configures `zb` too, with no second set of names to learn.
 //!
 //! Every accessor returns URLs in *preference order*: the mirror first, the
 //! upstream default last. Homebrew falls back to the default domain when the
 //! mirror cannot serve a file, and so do we — unless
 //! `HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK` is set, which is the one case where
 //! reaching upstream is itself the failure the user is trying to prevent.
+//!
+//! `HOMEBREW_BOTTLE_DOMAIN` is deliberately **not** read here. Homebrew only
+//! keeps the OCI layout when the bottle domain is itself a GitHub Packages
+//! URL; for anything else `Utils::Bottles.path_resolved_basename` appends a
+//! *flat* `name--version.tag.bottle.tar.gz`, which is what the mirrors people
+//! actually set it to publish. Rewriting only the host would produce a path
+//! those mirrors 404 on, and since the upstream URL is always appended as a
+//! fallback the variable would look supported while silently doing nothing.
+//! Producing the flat name needs the formula name, version, rebuild and
+//! bottle tag, none of which reach the download layer today — see #120.
 
 use std::sync::OnceLock;
 
@@ -18,9 +27,6 @@ use tracing::warn;
 
 /// Homebrew's `HOMEBREW_API_DEFAULT_DOMAIN`.
 pub(crate) const DEFAULT_API_DOMAIN: &str = "https://formulae.brew.sh/api";
-
-/// Homebrew's `HOMEBREW_BOTTLE_DEFAULT_DOMAIN`.
-pub(crate) const DEFAULT_BOTTLE_DOMAIN: &str = "https://ghcr.io/v2/homebrew/core";
 
 /// The GitHub Packages host bottles are served from. Homebrew rewrites the
 /// whole scheme+host of these URLs rather than prefixing them.
@@ -30,8 +36,6 @@ const OCI_REGISTRY_HOST: &str = "ghcr.io";
 pub(crate) struct MirrorConfig {
     /// `HOMEBREW_API_DOMAIN`, if it differs from the default.
     api_domain: Option<String>,
-    /// `HOMEBREW_BOTTLE_DOMAIN`, if it differs from the default.
-    bottle_domain: Option<String>,
     /// `HOMEBREW_ARTIFACT_DOMAIN`: a prefix applied to *every* download.
     artifact_domain: Option<String>,
     /// `HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK`: never try the upstream URL.
@@ -52,7 +56,6 @@ impl MirrorConfig {
     pub(crate) fn from_env() -> Self {
         Self {
             api_domain: read_domain("HOMEBREW_API_DOMAIN", DEFAULT_API_DOMAIN),
-            bottle_domain: read_domain("HOMEBREW_BOTTLE_DOMAIN", DEFAULT_BOTTLE_DOMAIN),
             artifact_domain: read_domain("HOMEBREW_ARTIFACT_DOMAIN", ""),
             artifact_domain_no_fallback: std::env::var_os("HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK")
                 .is_some(),
@@ -92,12 +95,6 @@ impl MirrorConfig {
             if self.artifact_domain_no_fallback {
                 return candidates;
             }
-        }
-
-        if let Some(domain) = &self.bottle_domain
-            && let Some(rest) = url.strip_prefix(DEFAULT_BOTTLE_DOMAIN)
-        {
-            candidates.push(format!("{domain}{rest}"));
         }
 
         for mirror in &self.bottle_mirrors {
@@ -235,33 +232,19 @@ mod tests {
         );
     }
 
+    /// `HOMEBREW_BOTTLE_DOMAIN` is not implemented, and half-implementing it
+    /// would be worse than leaving it alone: the upstream URL is always
+    /// appended, so a wrong rewrite 404s and falls through to ghcr.io with
+    /// nothing said. Until the flat bottle filename can be produced, the
+    /// variable must have no effect at all. See #120.
     #[test]
-    fn the_bottle_domain_replaces_the_default_root_url() {
-        let config = MirrorConfig {
-            bottle_domain: Some("https://mirror.example.com/homebrew-bottles".to_string()),
-            ..Default::default()
-        };
+    fn the_bottle_domain_is_not_honoured_yet() {
+        // SAFETY-equivalent: `MirrorConfig::from_env` is the only reader and
+        // this asserts the struct has no field for it, which is a compile-time
+        // property exercised here as a behavioural one.
+        let config = MirrorConfig::default();
 
-        assert_eq!(
-            config.download_candidates(BOTTLE_URL),
-            [
-                "https://mirror.example.com/homebrew-bottles/gettext/manifests/0.21",
-                BOTTLE_URL,
-            ]
-        );
-    }
-
-    #[test]
-    fn the_bottle_domain_leaves_non_bottle_urls_alone() {
-        let config = MirrorConfig {
-            bottle_domain: Some("https://mirror.example.com/homebrew-bottles".to_string()),
-            ..Default::default()
-        };
-
-        assert_eq!(
-            config.download_candidates("https://example.com/foo.tar.gz"),
-            ["https://example.com/foo.tar.gz"]
-        );
+        assert_eq!(config.download_candidates(BOTTLE_URL), [BOTTLE_URL]);
     }
 
     #[test]
@@ -311,7 +294,6 @@ mod tests {
         let config = MirrorConfig {
             artifact_domain: Some("http://localhost:8080".to_string()),
             artifact_domain_no_fallback: true,
-            bottle_domain: Some("https://mirror.example.com/bottles".to_string()),
             ..Default::default()
         };
 
@@ -339,15 +321,15 @@ mod tests {
 
     #[test]
     fn a_domain_equal_to_the_default_is_not_listed_twice() {
-        let name = "HOMEBREW_BOTTLE_DOMAIN";
+        let name = "HOMEBREW_API_DOMAIN";
         assert_eq!(
-            parse_domain(DEFAULT_BOTTLE_DOMAIN, DEFAULT_BOTTLE_DOMAIN, name),
+            parse_domain(DEFAULT_API_DOMAIN, DEFAULT_API_DOMAIN, name),
             None
         );
         assert_eq!(
             parse_domain(
-                "  https://ghcr.io/v2/homebrew/core/  ",
-                DEFAULT_BOTTLE_DOMAIN,
+                "  https://formulae.brew.sh/api/  ",
+                DEFAULT_API_DOMAIN,
                 name
             ),
             None

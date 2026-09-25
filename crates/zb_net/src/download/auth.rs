@@ -73,7 +73,7 @@ where
             }
         };
 
-        fetch_bearer_token_internal(client, token_cache, www_auth).await?
+        fetch_bearer_token_internal(client, token_cache, url, www_auth).await?
     };
 
     let response = build(client)
@@ -174,7 +174,7 @@ pub(crate) async fn get_cached_token_for_url_internal(
     token_cache: &TokenCache,
     url: &str,
 ) -> Option<String> {
-    let scope = extract_scope_for_url(url)?;
+    let scope = token_cache_key(url, &extract_scope_for_url(url)?);
     let cache = token_cache.read().await;
     let now = Instant::now();
 
@@ -187,13 +187,15 @@ pub(crate) async fn get_cached_token_for_url_internal(
 pub(crate) async fn fetch_bearer_token_internal(
     client: &reqwest::Client,
     token_cache: &TokenCache,
+    url: &str,
     www_authenticate: &str,
 ) -> Result<String, Error> {
     let (realm, service, scope) = parse_www_authenticate(www_authenticate)?;
+    let cache_key = token_cache_key(url, &scope);
 
     {
         let cache = token_cache.read().await;
-        if let Some(cached) = cache.get(&scope)
+        if let Some(cached) = cache.get(&cache_key)
             && cached.expires_at > Instant::now()
         {
             return Ok(cached.token.clone());
@@ -224,7 +226,7 @@ pub(crate) async fn fetch_bearer_token_internal(
     {
         let mut cache = token_cache.write().await;
         cache.insert(
-            scope,
+            cache_key,
             CachedToken {
                 token: token_response.token.clone(),
                 expires_at: Instant::now() + Duration::from_secs(240),
@@ -233,6 +235,22 @@ pub(crate) async fn fetch_bearer_token_internal(
     }
 
     Ok(token_response.token)
+}
+
+/// Cache key for a registry token: the host that issued it, plus the scope.
+///
+/// A token is only valid at the registry that minted it, and mirrors made
+/// these URLs multi-host — before that every URL reaching this module was
+/// literally ghcr.io, so the scope alone was incidentally host-unique.
+/// Keying on the scope alone now lets a mirror's token be attached to an
+/// upstream request, and the retry re-reads the same entry, so the fallback
+/// dies with "token was rejected by server" instead of succeeding.
+fn token_cache_key(url: &str, scope: &str) -> String {
+    let host = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_string))
+        .unwrap_or_default();
+    format!("{host}\u{1f}{scope}")
 }
 
 pub(crate) fn extract_scope_for_url(url: &str) -> Option<String> {
@@ -366,6 +384,30 @@ mod tests {
         let scope =
             extract_scope_for_url("https://ghcr.io/v2/homebrew/core/lz4/blobs/sha256:abc").unwrap();
         assert_eq!(scope, "repository:homebrew/core/lz4:pull");
+    }
+
+    /// A token minted by one registry must never be attached to a request to
+    /// another. Mirrors made these URLs multi-host; before that the scope was
+    /// incidentally host-unique, which is why this could go unnoticed.
+    #[test]
+    fn token_cache_keys_separate_hosts_sharing_a_scope() {
+        let scope = "repository:homebrew/core/lz4:pull";
+        let upstream =
+            token_cache_key("https://ghcr.io/v2/homebrew/core/lz4/blobs/sha256:a", scope);
+        let mirror = token_cache_key(
+            "https://mirror.example.com/v2/ghcr-io/homebrew/core/lz4/blobs/sha256:a",
+            scope,
+        );
+
+        assert_ne!(upstream, mirror);
+        assert_eq!(
+            upstream,
+            token_cache_key(
+                "https://ghcr.io/v2/homebrew/core/other/blobs/sha256:b",
+                scope
+            ),
+            "the same host and scope must still share one entry"
+        );
     }
 
     #[test]

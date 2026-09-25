@@ -122,7 +122,14 @@ async fn download_chunk(
                         }
                     };
 
-                    match fetch_bearer_token_internal(ctx.client, ctx.token_cache, www_auth).await {
+                    match fetch_bearer_token_internal(
+                        ctx.client,
+                        ctx.token_cache,
+                        ctx.url,
+                        www_auth,
+                    )
+                    .await
+                    {
                         Ok(_new_token) => {
                             last_error = Some(Error::NetworkFailure {
                                 message: "token expired, retrying with new token".to_string(),

@@ -97,9 +97,12 @@ impl Downloader {
             return Ok(self.blob_cache.blob_path(expected_sha256));
         }
 
-        // Mirror first, upstream last: `download_with_racing` treats the head
-        // of this list as the primary and the tail as fallbacks, which is the
-        // preference order `MirrorConfig` already encodes.
+        // `MirrorConfig` returns these in preference order, but only the
+        // chunked branch of `download_with_racing` walks them in order. The
+        // single-connection branch races the whole list on a stagger, so a
+        // configured mirror does not stop upstream being contacted -- set
+        // HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK when that matters, which
+        // yields one candidate and so no race.
         let candidates = MirrorConfig::shared().download_candidates(url);
         let (primary, alternates) = candidates.split_first().expect("always at least one URL");
 

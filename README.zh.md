@@ -263,13 +263,20 @@ zbrew 读取与 Homebrew 相同的镜像环境变量。已经为 `brew` 配置�
 | 变量 | 作用 | 默认值 |
 |---|---|---|
 | `HOMEBREW_API_DOMAIN` | formula 与 cask 元数据的基地址 | `https://formulae.brew.sh/api` |
-| `HOMEBREW_BOTTLE_DOMAIN` | bottle 及其 manifest 的基地址 | `https://ghcr.io/v2/homebrew/core` |
 | `HOMEBREW_ARTIFACT_DOMAIN` | 所有下载（含 bottle）的前缀 | — |
 | `HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK` | 失败时直接报错，不回退到默认地址 | 未设置 |
 
-zbrew 先请求镜像，默认地址作为回退。镜像宕机、落后或缺少文件时，zbrew 仍能
-找到该软件包。如果请求绝对不能离开镜像，请设置
-`HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK`。
+zbrew 优先使用镜像，默认地址作为回退，因此镜像宕机、落后或缺少文件时仍能找到
+该软件包。元数据请求严格先镜像后默认；bottle 下载则是竞速而非严格顺序：zbrew
+同时打开多条连接，谁先返回就用谁，所以即使镜像健康，默认地址也仍会被访问。如果
+请求绝对不能离开镜像，请设置 `HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK`——它只保留
+一个候选地址，因此不会发生竞速。
+
+`HOMEBREW_BOTTLE_DOMAIN` 目前**尚未**支持。当 bottle 域名不是 GitHub Packages
+时，Homebrew 提供的是扁平的 `name--version.tag.bottle.tar.gz` 文件，而 zbrew
+还无法构造该文件名；与其重写出镜像必然 404 的地址，不如直接忽略该变量。请改用
+`HOMEBREW_ARTIFACT_DOMAIN` 搭配支持 registry 代理的镜像。进展见
+[#120](https://github.com/HernandoR/zbrew/issues/120)。
 
 `HOMEBREW_ARTIFACT_DOMAIN` 对普通下载地址做整体前缀，因此
 `https://example.com/foo.tar.gz` 变成
