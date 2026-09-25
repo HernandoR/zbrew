@@ -1,10 +1,12 @@
-use clap::{Parser, Subcommand};
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "zb")]
 #[command(about = "Zbrew - A fast Homebrew-compatible package installer")]
 #[command(version)]
+#[command(arg_required_else_help = true)]
 pub struct Cli {
     #[arg(long, env = "ZBREW_ROOT", help = "Path to zbrew data directory")]
     pub root: Option<PathBuf>,
@@ -44,6 +46,39 @@ pub struct Cli {
     pub command: Commands,
 }
 
+impl Cli {
+    /// Parse the process arguments, answering a bare `zb` with the help text
+    /// the way `brew` does: on stdout, exiting 0.
+    ///
+    /// clap renders the full help when the required subcommand is missing,
+    /// but routes it to stderr and exits 2 (clap-rs/clap#6397). Asking a tool
+    /// what it can do is not an error: `zb | less` should page the help, and
+    /// `zb && echo ok` should print `ok`, both of which hold for `brew`.
+    /// Anything the user actually got *wrong* still fails through clap.
+    pub fn parse_or_help() -> Self {
+        match Self::try_parse() {
+            Ok(cli) => cli,
+            Err(err) => {
+                if !is_bare_invocation(std::env::args_os().len(), err.kind()) {
+                    err.exit();
+                }
+
+                Self::command()
+                    .print_help()
+                    .expect("failed to write help to stdout");
+                std::process::exit(0);
+            }
+        }
+    }
+}
+
+/// `true` when clap's complaint is "you gave me nothing", not "you gave me
+/// something wrong". Both produce the same error kind, so the argument count
+/// is what separates `zb` from `zb --root /tmp`.
+fn is_bare_invocation(argc: usize, kind: ErrorKind) -> bool {
+    argc <= 1 && kind == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+}
+
 fn parse_concurrency(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
@@ -58,6 +93,35 @@ fn parse_concurrency(value: &str) -> Result<usize, String> {
 mod tests {
     use super::Cli;
     use clap::Parser;
+
+    /// `Cli` is not `Debug`, so `unwrap_err` is unavailable.
+    fn parse_error<const N: usize>(args: [&str; N]) -> clap::Error {
+        match Cli::try_parse_from(args) {
+            Ok(_) => panic!("expected {args:?} to be rejected"),
+            Err(err) => err,
+        }
+    }
+
+    #[test]
+    fn a_bare_invocation_asks_for_help_rather_than_failing() {
+        let err = parse_error(["zb"]);
+
+        assert!(super::is_bare_invocation(1, err.kind()));
+    }
+
+    #[test]
+    fn an_incomplete_invocation_is_still_an_error() {
+        let err = parse_error(["zb", "--root", "/tmp"]);
+
+        assert!(!super::is_bare_invocation(3, err.kind()));
+    }
+
+    #[test]
+    fn a_rejected_argument_is_still_an_error() {
+        let err = parse_error(["zb", "--concurrency", "0", "list"]);
+
+        assert!(!super::is_bare_invocation(1, err.kind()));
+    }
 
     #[test]
     fn accepts_positive_concurrency() {

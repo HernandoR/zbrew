@@ -1,4 +1,3 @@
-use clap::Parser;
 use console::style;
 use zb_cli::{
     cli::{Cli, Commands},
@@ -12,7 +11,7 @@ use zb_installer::create_installer;
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
+    let cli = Cli::parse_or_help();
     logging::init(cli.verbose, cli.quiet);
 
     if let Err(e) = run(cli).await {
