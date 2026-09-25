@@ -168,7 +168,9 @@ Each command has a help page. Run `zb <command> --help` to read it.
 zb install jq                      # install one package
 zb install wget git                # install multiple packages
 zb install --build-from-source jq  # build from source instead of a bottle
+zb install --cask docker-desktop   # install a cask by its Homebrew token
 zb uninstall jq                    # uninstall one package
+zb uninstall --cask docker-desktop # uninstall a cask by its token
 zbx jq --version                   # run a package without linking or keeping it
 ```
 
@@ -198,6 +200,32 @@ zb bundle install -f myfile        # install from a custom file
 zb bundle dump                     # export installed packages to Brewfile
 zb bundle dump -f out --force      # dump to a custom file (overwrite)
 ```
+
+### Casks
+
+A cask is a Homebrew package that ships a prebuilt application rather than a
+bottle. Of the artifact kinds a cask declares, zbrew installs two: a `binary`,
+which lands in the prefix like any other command, and an `app`, which is moved
+into your app directory as a real `.app` bundle with a symlink left in the keg
+pointing at it. `zb uninstall` follows that symlink to remove the application
+again.
+
+```bash
+zb install --cask iterm2               # an application
+zb install --cask visual-studio-code   # an application and its `code` command
+zb uninstall --cask iterm2             # uninstall it, .app bundle included
+```
+
+`ZBREW_APPDIR` sets where `.app` bundles go (an absolute path) — `/Applications`
+on macOS, `$ZBREW_PREFIX/Applications` elsewhere. A name already taken in the app
+directory is reported as a conflict, never overwritten.
+
+Two limits are worth knowing. A cask whose download is a `.dmg` disk image
+cannot be installed — zbrew unpacks tar and zip — and neither can one that
+installs a `pkg`; both are refused with an error saying so. And the other
+artifact kinds a cask declares (`manpage`, the shell completions, `zap`,
+`uninstall`) are skipped, so a cask's manual page and completions do not
+arrive.
 
 ### Migrate and clean up
 

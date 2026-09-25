@@ -1,10 +1,12 @@
-use clap::{Parser, Subcommand};
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "zb")]
 #[command(about = "Zbrew - A fast Homebrew-compatible package installer")]
 #[command(version)]
+#[command(arg_required_else_help = true)]
 pub struct Cli {
     #[arg(long, env = "ZBREW_ROOT", help = "Path to zbrew data directory")]
     pub root: Option<PathBuf>,
@@ -44,6 +46,48 @@ pub struct Cli {
     pub command: Commands,
 }
 
+impl Cli {
+    /// Parse the process arguments, answering a bare `zb` with the help text
+    /// the way `brew` does: on stdout, exiting 0.
+    ///
+    /// clap renders the full help when the required subcommand is missing,
+    /// but by design routes every error kind other than `DisplayHelp` and
+    /// `DisplayVersion` to stderr with exit code 2. Asking a tool what it can
+    /// do is not an error: `zb | less` should page the help, and
+    /// `zb && echo ok` should print `ok`, both of which hold for `brew`.
+    /// Anything the user actually got *wrong* still fails through clap.
+    pub fn parse_or_help() -> Self {
+        match Self::try_parse() {
+            Ok(cli) => cli,
+            Err(err) => {
+                if !is_bare_invocation(std::env::args_os().len(), err.kind()) {
+                    err.exit();
+                }
+
+                Self::command()
+                    .print_help()
+                    .expect("failed to write help to stdout");
+                std::process::exit(0);
+            }
+        }
+    }
+}
+
+/// `true` when clap's complaint is "you gave me nothing", not "you gave me
+/// something wrong".
+///
+/// For this `Cli` -- whose subcommand is required implicitly, by being a
+/// non-`Option` field rather than by an explicit `subcommand_required` -- the
+/// kind alone already separates the two: a bare `zb` gives
+/// `DisplayHelpOnMissingArgumentOrSubcommand` while `zb --root /tmp` gives
+/// `MissingSubcommand`. The argument count is a guard, not the discriminator:
+/// the kinds do collapse under other `subcommand_required` configurations
+/// (clap-rs/clap#6397), and a future clap or a change to this struct must not
+/// quietly turn an incomplete invocation into a success.
+fn is_bare_invocation(argc: usize, kind: ErrorKind) -> bool {
+    argc <= 1 && kind == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+}
+
 fn parse_concurrency(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
@@ -58,6 +102,48 @@ fn parse_concurrency(value: &str) -> Result<usize, String> {
 mod tests {
     use super::Cli;
     use clap::Parser;
+    use clap::error::ErrorKind;
+
+    /// `Cli` is not `Debug`, so `unwrap_err` is unavailable.
+    fn parse_error<const N: usize>(args: [&str; N]) -> clap::Error {
+        match Cli::try_parse_from(args) {
+            Ok(_) => panic!("expected {args:?} to be rejected"),
+            Err(err) => err,
+        }
+    }
+
+    #[test]
+    fn a_bare_invocation_asks_for_help_rather_than_failing() {
+        let err = parse_error(["zb"]);
+
+        assert!(super::is_bare_invocation(1, err.kind()));
+    }
+
+    /// The kind alone carries this today; the assertion is on the kind so the
+    /// test fails if that stops being true, rather than passing because the
+    /// argument count happened to rule it out.
+    #[test]
+    fn an_incomplete_invocation_is_still_an_error() {
+        let err = parse_error(["zb", "--root", "/tmp"]);
+
+        assert_eq!(err.kind(), ErrorKind::MissingSubcommand);
+        assert!(!super::is_bare_invocation(3, err.kind()));
+    }
+
+    #[test]
+    fn a_bare_invocation_is_the_one_kind_that_asks_for_help() {
+        assert_eq!(
+            parse_error(["zb"]).kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+    }
+
+    #[test]
+    fn a_rejected_argument_is_still_an_error() {
+        let err = parse_error(["zb", "--concurrency", "0", "list"]);
+
+        assert!(!super::is_bare_invocation(1, err.kind()));
+    }
 
     #[test]
     fn accepts_positive_concurrency() {
@@ -99,6 +185,32 @@ mod tests {
     }
 
     #[test]
+    fn install_accepts_the_cask_flag() {
+        let cli = Cli::try_parse_from(["zb", "install", "--cask", "docker-desktop"]).unwrap();
+        let super::Commands::Install { formulas, cask, .. } = cli.command else {
+            panic!("expected an install command");
+        };
+        assert!(cask);
+        assert_eq!(formulas, vec!["docker-desktop".to_string()]);
+    }
+
+    #[test]
+    fn uninstall_accepts_the_cask_flag() {
+        let cli = Cli::try_parse_from(["zb", "uninstall", "--cask", "docker-desktop"]).unwrap();
+        let super::Commands::Uninstall { formulas, cask, .. } = cli.command else {
+            panic!("expected an uninstall command");
+        };
+        assert!(cask);
+        assert_eq!(formulas, vec!["docker-desktop".to_string()]);
+    }
+
+    #[test]
+    fn uninstall_cask_and_all_conflict() {
+        let result = Cli::try_parse_from(["zb", "uninstall", "--cask", "--all"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn outdated_quiet_and_verbose_conflict() {
         let result = Cli::try_parse_from(["zb", "outdated", "--quiet", "--verbose"]);
         assert!(result.is_err());
@@ -123,6 +235,8 @@ pub enum Commands {
     Install {
         #[arg(required = true, num_args = 1..)]
         formulas: Vec<String>,
+        #[arg(long, help = "Treat every argument as a cask token")]
+        cask: bool,
         #[arg(long, help = "Do not create symlinks after installation")]
         no_link: bool,
         #[arg(long, short = 's', help = "Build from source instead of using bottles")]
@@ -137,6 +251,12 @@ pub enum Commands {
     Uninstall {
         #[arg(required_unless_present = "all", num_args = 1..)]
         formulas: Vec<String>,
+        #[arg(
+            long,
+            conflicts_with = "all",
+            help = "Treat every argument as a cask token"
+        )]
+        cask: bool,
         #[arg(long, help = "Uninstall all installed packages")]
         all: bool,
     },

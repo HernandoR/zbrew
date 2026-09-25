@@ -184,11 +184,13 @@ store entries that no package uses.
 zb install jq                   # install one package
 zb install wget git             # install multiple packages
 zb install --build-from-source jq  # build from source instead of a bottle
+zb install --cask docker-desktop   # install a cask by its Homebrew token
 zb bundle                       # install from Brewfile
 zb bundle install -f myfile     # install from a custom file
 zb bundle dump                  # export installed packages to Brewfile
 zb bundle dump -f out --force   # dump to a custom file (overwrite)
 zb uninstall jq                 # uninstall one package
+zb uninstall --cask docker-desktop # uninstall a cask by its token
 zb list                         # list installed packages
 zb list --all                   # list installed packages, zbx temporaries included
 zb info jq                      # show details of an installed package
@@ -205,6 +207,58 @@ zbx jq --version                # run a package without linking or keeping it
 ```
 
 Each command has a help page. Run `zb <command> --help` to read it.
+
+## Casks
+
+A cask is a Homebrew package that ships a prebuilt application rather than a
+bottle. A cask declares its contents as artifacts, of which zbrew installs
+two kinds:
+
+- `binary` — a command-line executable. It lands in the keg's `bin` directory
+  and is linked into the prefix like any other command.
+- `app` — a `.app` bundle. It is unpacked into the keg, then **moved** into
+  your app directory, and the keg keeps a symlink pointing at where it went.
+  The bundle has to be a real directory where macOS looks for it, because
+  Launch Services and Gatekeeper do not follow a symlinked bundle reliably.
+  That symlink is what `zb uninstall` follows to remove the application again.
+
+Name a cask with `--cask`, or by the token Homebrew uses:
+
+```bash
+zb install --cask iterm2                  # an application
+zb install --cask visual-studio-code      # an application and its `code` command
+zb install homebrew/cask/iterm2           # the same as the first line
+zb uninstall --cask iterm2                # takes the .app bundle with it
+```
+
+A cask often installs a command that lives inside its own application bundle —
+`visual-studio-code` does, and that is what its `code` command is. Those are
+installed together, as one package.
+
+`ZBREW_APPDIR` sets where `.app` bundles go; it must be an absolute path. It
+defaults to `/Applications` on macOS and to `$ZBREW_PREFIX/Applications`
+elsewhere, since a `.app` means nothing off macOS. zbrew never overwrites a bundle it did not install: a name
+already taken in the app directory is reported as a conflict and the install
+stops rather than replacing an application you put there yourself.
+
+Casks are placed in zbrew's own tree, not Homebrew's. Where a cask asks for
+`/usr/local/bin/docker`, zbrew keeps the name and installs `docker` into its
+own prefix.
+
+### What a cask can still not do
+
+Two limits are worth knowing before you reach for a cask:
+
+- **Disk images.** zbrew unpacks tar and zip archives. A cask whose download is
+  a `.dmg` is refused with an error saying so, which rules out a good share of
+  them — `ghostty` and `docker-desktop` among others. Casks that install a
+  `pkg` are refused for the same reason.
+- **Other artifact kinds are ignored.** Casks also declare `manpage`,
+  `zsh_completion`, `bash_completion`, `fish_completion`, `zap`, `uninstall`
+  and more. zbrew installs the `binary` and `app` artifacts and silently skips
+  the rest, so a cask's manual page and shell completions do not arrive, and
+  `zb uninstall` removes what was installed rather than running the cask's own
+  `uninstall` or `zap` steps.
 
 ## Manual pages
 
