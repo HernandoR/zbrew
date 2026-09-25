@@ -28,7 +28,8 @@ pub async fn execute(
 /// The packages a Brewfile asks for.
 struct Manifest {
     /// Install names, normalised the way `zb install` normalises them, so a
-    /// `homebrew/cask/docker` line and a `cask "docker"` line are one package.
+    /// `homebrew/cask/docker` line and a `cask "docker"` line collapse to one
+    /// package rather than being counted and installed twice.
     entries: Vec<String>,
 }
 
@@ -48,20 +49,32 @@ impl Manifest {
                 continue;
             }
 
-            if let Some(parsed) = parse_brewfile_entry(entry)
-                && seen.insert(parsed.clone())
-            {
-                entries.push(parsed);
+            let Some(parsed) = parse_brewfile_entry(entry) else {
+                continue;
+            };
+            // Dedupe on the *normalised* name, so two spellings of the same
+            // package are one entry. A name that cannot be normalised is kept
+            // verbatim, so the error it eventually produces names what the
+            // user actually wrote.
+            let normalized = normalize_formula_name(&parsed).unwrap_or(parsed);
+            if seen.insert(normalized.clone()) {
+                entries.push(normalized);
             }
         }
 
-        if entries.is_empty() {
+        Ok(Self { entries })
+    }
+
+    /// An empty Brewfile is not an error for `check` -- nothing is required,
+    /// so nothing is missing -- but it almost certainly is one for `install`,
+    /// which the user asked to do something.
+    fn require_non_empty(&self, path: &Path) -> Result<(), zb_core::Error> {
+        if self.entries.is_empty() {
             return Err(zb_core::Error::FileError {
                 message: format!("manifest {} did not contain any formulas", path.display()),
             });
         }
-
-        Ok(Self { entries })
+        Ok(())
     }
 
     /// Split the manifest into what is already installed and what is not.
@@ -74,8 +87,7 @@ impl Manifest {
         let mut missing = Vec::new();
 
         for entry in &self.entries {
-            let name = normalize_formula_name(entry).unwrap_or_else(|_| entry.clone());
-            match installer.get_installed(&name) {
+            match installer.get_installed(entry) {
                 Some(keg) if !keg.reason.is_transient() => satisfied.push(entry.as_str()),
                 _ => missing.push(entry.as_str()),
             }
@@ -132,6 +144,7 @@ async fn install_from_file(
     ui: &mut StdUi,
 ) -> Result<(), zb_core::Error> {
     let manifest = Manifest::load(manifest_path)?;
+    manifest.require_non_empty(manifest_path)?;
     // Installing what is already there costs an unpack and a relink per
     // package, which is what made `zb bundle` in an `.envrc` redo its work on
     // every directory change. `brew bundle install` skips them too.
@@ -392,18 +405,51 @@ mod tests {
         assert_eq!(entries, vec!["jq", "wget", "git"]);
     }
 
-    #[test]
-    fn load_manifest_errors_when_only_comments() {
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        writeln!(file, "# nothing here\n   # still nothing").unwrap();
+    /// `brew bundle check` exits 0 on a Brewfile that requires nothing --
+    /// nothing is missing. Erroring would leave a repo whose Brewfile has
+    /// been emptied with a permanently red gate.
+    #[tokio::test]
+    async fn an_empty_manifest_satisfies_check_but_not_install() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let mut installer = make_installer(
+            &tmp.path().join("zbrew"),
+            &tmp.path().join("homebrew"),
+            &server.uri(),
+        );
+        let mut ui = StdUi::new();
+        let manifest = brewfile(&tmp, "# nothing here\n   # still nothing\n");
 
-        let err = load_manifest(file.path()).unwrap_err();
+        check_file(&installer, &manifest).expect("an empty Brewfile requires nothing");
+
+        let err = install_from_file(&mut installer, &manifest, false, &mut ui)
+            .await
+            .unwrap_err();
         match err {
             zb_core::Error::FileError { message } => {
-                assert!(message.contains("did not contain any formulas"))
+                assert!(
+                    message.contains("did not contain any formulas"),
+                    "{message}"
+                )
             }
             other => panic!("expected file error, got {other:?}"),
         }
+    }
+
+    /// Two spellings of one package must not be counted twice by `check` nor
+    /// installed twice by `install`.
+    #[test]
+    fn equivalent_spellings_collapse_to_one_entry() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "cask \"docker\"\nhomebrew/cask/docker\nbrew \"jq\"\nhomebrew/core/jq"
+        )
+        .unwrap();
+
+        let entries = load_manifest(file.path()).unwrap();
+
+        assert_eq!(entries, vec!["cask:docker", "jq"]);
     }
 
     #[test]
