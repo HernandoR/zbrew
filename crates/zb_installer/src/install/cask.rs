@@ -15,6 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use tracing::warn;
 use zb_core::{ConflictedLink, Error, formula_token, validate_destructive_path};
 use zb_net::DownloadRequest;
 use zb_store::InstallReason;
@@ -159,8 +160,13 @@ fn artifact_types(cask: &Value) -> String {
     }
 }
 
-/// Every entry of artifact type `kind` (`"binary"` or `"app"`) in the cask's
-/// `artifacts` array.
+/// Every declaration of artifact type `kind` (`"binary"` or `"app"`) in the
+/// cask's `artifacts` array.
+///
+/// One entry of that array is one declaration, not one artifact per element:
+/// the array under the type key is a Ruby argument list, so element 0 is the
+/// source and element 1, when present, is the keyword hash. A cask that
+/// installs several binaries repeats the whole `{"binary": …}` object.
 fn parse_artifacts(cask: &Value, kind: &str) -> Result<Vec<CaskArtifact>, Error> {
     let artifacts = cask
         .get("artifacts")
@@ -171,66 +177,64 @@ fn parse_artifacts(cask: &Value, kind: &str) -> Result<Vec<CaskArtifact>, Error>
 
     let mut parsed = Vec::new();
     for artifact in artifacts {
-        let Some(entries) = artifact.get(kind).and_then(Value::as_array) else {
+        let Some(args) = artifact.get(kind).and_then(Value::as_array) else {
             continue;
         };
-
-        for entry in entries {
-            parsed.push(parse_artifact_entry(entry, kind)?);
-        }
+        parsed.push(parse_artifact_declaration(artifact, args, kind)?);
     }
 
     Ok(parsed)
 }
 
-/// One artifact entry, which is either a bare path or `[path, {"target": …}]`.
-fn parse_artifact_entry(entry: &Value, kind: &str) -> Result<CaskArtifact, Error> {
-    if let Some(path) = entry.as_str() {
-        return Ok(CaskArtifact {
-            source: path.to_string(),
-            target: basename(path)?,
-        });
-    }
-
-    let array = entry.as_array().ok_or_else(|| Error::InvalidArgument {
-        message: format!("unsupported cask {kind} artifact shape"),
-    })?;
-    let source = array
+/// One declaration: `{"<kind>": [<source>, {"target": …}], "target": …}`.
+///
+/// The target can arrive two ways and the API uses both at once, so both are
+/// read: the keyword hash in the argument list first, then the declaration's
+/// own `target` key.
+fn parse_artifact_declaration(
+    artifact: &Value,
+    args: &[Value],
+    kind: &str,
+) -> Result<CaskArtifact, Error> {
+    let source = args
         .first()
         .and_then(Value::as_str)
         .ok_or_else(|| Error::InvalidArgument {
             message: format!("unsupported cask {kind} source"),
         })?;
 
-    let target = array
+    let target = args
         .get(1)
         .and_then(Value::as_object)
-        .and_then(|obj| obj.get("target"))
+        .and_then(|keywords| keywords.get("target"))
         .and_then(Value::as_str)
-        .map(ToString::to_string)
-        .unwrap_or_else(|| basename(source).unwrap_or_else(|_| source.to_string()));
-
-    // A target names one entry in a directory zbrew owns. Anything that could
-    // point somewhere else -- a path, a variable, a home-relative path -- is
-    // refused rather than interpreted.
-    if target.contains('/') || target.contains('$') || target.contains('~') {
-        return Err(Error::InvalidArgument {
-            message: format!("unsupported cask {kind} target path '{target}'"),
-        });
-    }
+        .or_else(|| artifact.get("target").and_then(Value::as_str))
+        .unwrap_or(source);
 
     Ok(CaskArtifact {
         source: source.to_string(),
-        target,
+        target: artifact_file_name(target, kind)?,
     })
 }
 
-fn basename(path: &str) -> Result<String, Error> {
-    let name = Path::new(path)
+/// The name an artifact takes in the directory zbrew stages it into.
+///
+/// A cask target is the full path Homebrew would install to, written against
+/// Homebrew's own layout: `/Applications/iTerm.app`, `/usr/local/bin/docker`,
+/// `$HOMEBREW_PREFIX/bin/code`. zbrew has its own prefix and its own app
+/// directory, so the target is read for the *name* it asks for and placed
+/// under the directory zbrew is staging into — the same position Homebrew
+/// would give it, in zbrew's tree rather than Homebrew's.
+///
+/// Keeping only the last component is also what makes a target unable to
+/// escape that directory, so no separate traversal check is needed.
+fn artifact_file_name(target: &str, kind: &str) -> Result<String, Error> {
+    let name = Path::new(target)
         .file_name()
-        .and_then(|s| s.to_str())
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
         .ok_or_else(|| Error::InvalidArgument {
-            message: format!("invalid cask artifact path '{path}'"),
+            message: format!("cask {kind} target '{target}' names no file"),
         })?;
     Ok(name.to_string())
 }
@@ -244,13 +248,8 @@ impl Installer {
         let cask_json = self.api_client.get_cask(token).await?;
         let cask = resolve_cask(token, &cask_json)?;
 
-        // Read before anything is staged. A reinstall, or an install of a
-        // different version, overwrites the keg symlinks that point at the
-        // bundles the previous install put in the app directory -- after that
-        // there is nothing left to say which bundles were ours, and they would
-        // collide with the ones about to be installed.
-        let superseded_apps = self.apps_installed_by(&cask.install_name);
         let app_dir = self.app_dir.clone();
+        let superseded_apps = self.apps_installed_by(&cask.install_name, &app_dir);
 
         let blob_path = self
             .downloader
@@ -271,8 +270,21 @@ impl Installer {
             &cask.install_name,
             &cask.version,
             &keg_path,
+            &app_dir,
             link,
         );
+
+        // Before staging, not after. Staging replaces the keg symlinks that
+        // record where the previous install's bundles went, and those links
+        // are the only thing that attributes them to this cask -- past that
+        // point a bundle left in the app directory can never be found again,
+        // whether the install goes on to succeed, to fail, or to skip linking
+        // entirely. Removing them here costs a failed reinstall the old
+        // bundle; leaving them stranded with no owner is the state issue #54
+        // was about.
+        for app in &superseded_apps {
+            remove_installed_app(app)?;
+        }
 
         let staging = CaskStaging::new(&cask, &keg_path);
         if zb_extract::is_archive(&blob_path)? {
@@ -284,9 +296,6 @@ impl Installer {
 
         let linked_files = if link {
             let linked = self.linker.link_keg(&keg_path)?;
-            for app in &superseded_apps {
-                remove_installed_app(app)?;
-            }
             staging.link_apps(&app_dir)?;
             linked
         } else {
@@ -314,20 +323,20 @@ impl Installer {
         Ok(())
     }
 
-    /// The bundles in the app directory that the currently recorded install of
+    /// The bundles in `app_dir` that the currently recorded install of
     /// `install_name` put there, or nothing when it is not installed.
     ///
     /// Best effort: a keg whose staging directory cannot be read has no
     /// bundles worth retiring, and failing the install over it would help
     /// nobody.
-    fn apps_installed_by(&self, install_name: &str) -> Vec<PathBuf> {
+    fn apps_installed_by(&self, install_name: &str, app_dir: &Path) -> Vec<PathBuf> {
         let Some(keg) = self.db.get_installed(install_name) else {
             return Vec::new();
         };
         let keg_path = self
             .cellar
             .keg_path(formula_token(install_name), &keg.version);
-        installed_app_paths(&keg_path).unwrap_or_default()
+        installed_app_paths(&keg_path, app_dir).unwrap_or_default()
     }
 }
 
@@ -572,9 +581,18 @@ impl<'a> CaskStaging<'a> {
     }
 }
 
-/// Every bundle in the app directory that the keg at `keg_path` installed,
-/// read from the symlinks [`move_app_into_place`] left behind.
-fn installed_app_paths(keg_path: &Path) -> Result<Vec<PathBuf>, Error> {
+/// Every bundle under `app_dir` that the keg at `keg_path` installed, read
+/// from the symlinks [`move_app_into_place`] left behind.
+///
+/// A symlink whose target is not inside `app_dir` is skipped with a warning
+/// rather than returned. The keg is just a directory on disk: a symlink under
+/// `<keg>/Applications` can also arrive from the archive itself, because
+/// extraction validates entry *names* but not symlink *targets*, and the
+/// cellar recreates them verbatim. Returning such a target would hand an
+/// arbitrary path — `~/Documents`, say — to a recursive delete, which is not
+/// something an uninstall is entitled to do. A relative link lands here too,
+/// and is skipped for the same reason instead of failing the uninstall.
+fn installed_app_paths(keg_path: &Path, app_dir: &Path) -> Result<Vec<PathBuf>, Error> {
     let apps_dir = keg_path.join(CASK_APPS_DIR);
     if !apps_dir.exists() {
         return Ok(Vec::new());
@@ -591,22 +609,38 @@ fn installed_app_paths(keg_path: &Path) -> Result<Vec<PathBuf>, Error> {
         }
 
         let target = fs::read_link(&staged).map_err(Error::store("failed to read app symlink"))?;
-        installed.push(if target.is_relative() {
-            staged.parent().unwrap_or(Path::new("")).join(target)
-        } else {
-            target
-        });
+        if !is_installed_app_of(&target, app_dir) {
+            warn!(
+                link = %staged.display(),
+                target = %target.display(),
+                app_dir = %app_dir.display(),
+                "ignoring a keg app link that does not point into the app directory"
+            );
+            continue;
+        }
+
+        installed.push(target);
     }
 
     Ok(installed)
 }
 
-/// Remove every bundle the keg at `keg_path` installed into the app directory.
+/// Whether `target` is a bundle zbrew installed: an entry of `app_dir`
+/// itself, named absolutely.
+///
+/// Deliberately strict. Only a direct child counts, and only an absolute path
+/// — the links [`move_app_into_place`] writes are always both, so anything
+/// else did not come from an install and is not ours to delete.
+fn is_installed_app_of(target: &Path, app_dir: &Path) -> bool {
+    target.is_absolute() && target.parent() == Some(app_dir)
+}
+
+/// Remove every bundle the keg at `keg_path` installed into `app_dir`.
 ///
 /// A keg with no `Applications` directory — every formula, and every cask that
 /// ships only binaries — is a no-op.
-pub(super) fn remove_installed_apps(keg_path: &Path) -> Result<(), Error> {
-    for app in installed_app_paths(keg_path)? {
+pub(super) fn remove_installed_apps(keg_path: &Path, app_dir: &Path) -> Result<(), Error> {
+    for app in installed_app_paths(keg_path, app_dir)? {
         remove_installed_app(&app)?;
     }
     Ok(())
@@ -614,9 +648,11 @@ pub(super) fn remove_installed_apps(keg_path: &Path) -> Result<(), Error> {
 
 /// Delete one installed bundle, if it is still there.
 ///
-/// The path comes from a symlink on disk, so it is checked before a recursive
-/// delete acts on it: a keg edited by hand must not be able to turn an
-/// uninstall into `rm -rf` on a system directory.
+/// The caller has already established that the path is a direct child of the
+/// app directory. `validate_destructive_path` is the backstop for the case
+/// that leaves open — an app directory pointed somewhere absurd through
+/// `ZBREW_APPDIR`, which would make `/Applications` or `$HOME` a legitimate
+/// child of it.
 fn remove_installed_app(app: &Path) -> Result<(), Error> {
     if app.symlink_metadata().is_err() {
         return Ok(());
@@ -746,7 +782,7 @@ mod tests {
             "version": "1.0.0",
             "url": "https://example.com/darwin.zip",
             "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "artifacts": [{ "binary": [["op"]] }],
+            "artifacts": [{ "binary": ["op"] }],
             "variations": {
                 "x86_64_linux": {
                     "url": "https://example.com/linux.zip",
@@ -767,69 +803,116 @@ mod tests {
     }
 
     #[test]
-    fn resolve_cask_parses_binary_targets() {
+    fn resolve_cask_parses_a_binary_only_cask() {
         let cask = serde_json::json!({
             "token": "test",
             "version": "1.0.0",
             "url": "https://example.com/test.zip",
             "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "artifacts": [{
-                "binary": [
-                    ["bin/tool"],
-                    ["bin/tool2", {"target": "tool-two"}]
-                ]
-            }]
+            "artifacts": [{ "binary": ["bin/tool"] }]
         });
 
         let resolved = resolve_cask("test", &cask).unwrap();
-        assert_eq!(resolved.binaries.len(), 2);
+        assert_eq!(resolved.binaries.len(), 1);
+        assert_eq!(resolved.binaries[0].source, "bin/tool");
         assert_eq!(resolved.binaries[0].target, "tool");
-        assert_eq!(resolved.binaries[1].target, "tool-two");
         assert!(resolved.apps.is_empty());
     }
 
+    /// The three artifact shapes `formulae.brew.sh` actually emits, captured
+    /// verbatim from the API. One `artifacts` entry is one declaration: the
+    /// array under the type key is a Ruby argument list, so element 1 is the
+    /// keyword hash and not a second artifact.
     #[test]
-    fn resolve_cask_parses_app_targets() {
+    fn resolve_cask_parses_the_shapes_the_homebrew_api_emits() {
+        // iterm2: an app and nothing else. visual-studio-code: an app plus
+        // binaries inside it, target as a sibling key. docker-desktop: target
+        // in the keyword hash *and* as a sibling key, both absolute.
         let cask = serde_json::json!({
-            "token": "test",
+            "token": "mixed",
             "version": "1.0.0",
-            "url": "https://example.com/test.zip",
+            "url": "https://example.com/mixed.zip",
             "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "artifacts": [{
-                "app": [
-                    "Bare.app",
-                    ["Test.app"],
-                    ["nested/Other.app", {"target": "Renamed.app"}]
-                ]
-            }]
+            "artifacts": [
+                { "uninstall": [{ "quit": "com.example" }] },
+                { "app": ["iTerm.app"], "target": "/Applications/iTerm.app" },
+                {
+                    "binary": ["$APPDIR/Visual Studio Code.app/Contents/Resources/app/bin/code"],
+                    "target": "$HOMEBREW_PREFIX/bin/code"
+                },
+                {
+                    "binary": [
+                        "$APPDIR/Docker.app/Contents/Resources/bin/docker",
+                        { "target": "/usr/local/bin/docker" }
+                    ],
+                    "target": "/usr/local/bin/docker"
+                },
+                { "zap": [{ "trash": ["~/.example"] }] }
+            ]
         });
 
-        let resolved = resolve_cask("test", &cask).unwrap();
-        assert_eq!(resolved.apps.len(), 3);
-        assert_eq!(resolved.apps[0].target, "Bare.app");
-        assert_eq!(resolved.apps[1].target, "Test.app");
-        assert_eq!(resolved.apps[2].source, "nested/Other.app");
-        assert_eq!(resolved.apps[2].target, "Renamed.app");
-        assert!(resolved.binaries.is_empty());
+        let resolved = resolve_cask("mixed", &cask).unwrap();
+
+        assert_eq!(resolved.apps.len(), 1);
+        assert_eq!(resolved.apps[0].source, "iTerm.app");
+        assert_eq!(resolved.apps[0].target, "iTerm.app");
+
+        let binaries: Vec<(&str, &str)> = resolved
+            .binaries
+            .iter()
+            .map(|b| (b.source.as_str(), b.target.as_str()))
+            .collect();
+        assert_eq!(
+            binaries,
+            [
+                (
+                    "$APPDIR/Visual Studio Code.app/Contents/Resources/app/bin/code",
+                    "code"
+                ),
+                ("$APPDIR/Docker.app/Contents/Resources/bin/docker", "docker"),
+            ]
+        );
     }
 
-    /// An app target that could escape the directory zbrew owns is refused
-    /// rather than interpreted.
+    /// A cask installing several binaries repeats the whole `{"binary": …}`
+    /// object rather than listing them in one array.
     #[test]
-    fn resolve_cask_refuses_an_app_target_that_is_a_path() {
-        for target in ["../Evil.app", "~/Evil.app", "$HOME/Evil.app"] {
-            let cask = serde_json::json!({
-                "token": "test",
-                "version": "1.0.0",
-                "url": "https://example.com/test.zip",
-                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "artifacts": [{ "app": [["Test.app", {"target": target}]] }]
-            });
+    fn resolve_cask_collects_one_artifact_per_declaration() {
+        let cask = serde_json::json!({
+            "token": "many",
+            "version": "1.0.0",
+            "url": "https://example.com/many.zip",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifacts": [
+                { "binary": ["bin/one"], "target": "$HOMEBREW_PREFIX/bin/one" },
+                { "binary": ["bin/two"], "target": "$HOMEBREW_PREFIX/bin/renamed" }
+            ]
+        });
 
-            let err = resolve_cask("test", &cask).unwrap_err();
+        let resolved = resolve_cask("many", &cask).unwrap();
+        assert_eq!(resolved.binaries.len(), 2);
+        assert_eq!(resolved.binaries[0].target, "one");
+        assert_eq!(resolved.binaries[1].target, "renamed");
+    }
+
+    /// A cask target is the full path Homebrew would install to. zbrew keeps
+    /// the name it asks for and puts it in zbrew's own directory, which is
+    /// also what stops a target escaping that directory.
+    #[test]
+    fn a_cask_target_contributes_its_name_and_never_a_path() {
+        for (target, expected) in [
+            ("/Applications/Test.app", "Test.app"),
+            ("$HOMEBREW_PREFIX/bin/code", "code"),
+            ("~/Applications/Test.app", "Test.app"),
+            ("../../../etc/passwd", "passwd"),
+        ] {
+            assert_eq!(artifact_file_name(target, "app").unwrap(), expected);
+        }
+
+        for bad in ["", "/", "..", "."] {
             assert!(
-                matches!(err, Error::InvalidArgument { .. }),
-                "target '{target}' must be refused, got {err:?}"
+                artifact_file_name(bad, "app").is_err(),
+                "target '{bad}' names no file and must be refused"
             );
         }
     }
@@ -840,7 +923,7 @@ mod tests {
             "token": "test",
             "version": "1.0.0",
             "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "artifacts": [{ "binary": [["op"]] }]
+            "artifacts": [{ "binary": ["op"] }]
         });
 
         let err = resolve_cask("test", &cask).unwrap_err();
@@ -1104,7 +1187,7 @@ mod tests {
             .unwrap();
         assert!(app_dir.join("Test.app").exists());
 
-        remove_installed_apps(&keg_path).unwrap();
+        remove_installed_apps(&keg_path, &app_dir).unwrap();
 
         assert!(!app_dir.join("Test.app").exists());
         assert!(
@@ -1121,8 +1204,51 @@ mod tests {
         let keg_path = tmp.path().join("keg");
         fs::create_dir_all(keg_path.join("bin")).unwrap();
 
-        remove_installed_apps(&keg_path).unwrap();
+        remove_installed_apps(&keg_path, &tmp.path().join("Applications")).unwrap();
         assert!(keg_path.join("bin").exists());
+    }
+
+    /// An uninstall must not follow a link out of the app directory.
+    ///
+    /// A keg is a directory on disk and an archive can put a symlink in it:
+    /// extraction validates entry *names*, not symlink *targets*, and the
+    /// cellar recreates them verbatim. So `Applications/x -> ~/Documents` is
+    /// reachable without anything zbrew installed pointing there, and it must
+    /// never reach a recursive delete.
+    #[test]
+    fn remove_installed_apps_ignores_a_link_that_points_outside_the_app_dir() {
+        let tmp = TempDir::new().unwrap();
+        let keg_path = tmp.path().join("keg");
+        let staged_dir = keg_path.join(CASK_APPS_DIR);
+        fs::create_dir_all(&staged_dir).unwrap();
+
+        let app_dir = tmp.path().join("Applications");
+        fs::create_dir_all(&app_dir).unwrap();
+
+        let outsider = tmp.path().join("Documents");
+        fs::create_dir_all(&outsider).unwrap();
+        fs::write(outsider.join("thesis.txt"), b"years of work").unwrap();
+
+        #[cfg(unix)]
+        {
+            // Straight out of the app directory...
+            std::os::unix::fs::symlink(&outsider, staged_dir.join("Escape.app")).unwrap();
+            // ...and the same thing written relatively.
+            std::os::unix::fs::symlink("../../Documents", staged_dir.join("Relative.app")).unwrap();
+            // A link one level *below* the app directory is not ours either.
+            std::os::unix::fs::symlink(
+                app_dir.join("nested/Deep.app"),
+                staged_dir.join("Deep.app"),
+            )
+            .unwrap();
+        }
+
+        remove_installed_apps(&keg_path, &app_dir).unwrap();
+
+        assert!(
+            outsider.join("thesis.txt").exists(),
+            "uninstall must not delete a path outside the app directory"
+        );
     }
 
     /// A bundle the user has already deleted is not an error, and a staged
@@ -1139,7 +1265,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(app_dir.join("Gone.app"), staged_dir.join("Gone.app")).unwrap();
 
-        remove_installed_apps(&keg_path).unwrap();
+        remove_installed_apps(&keg_path, &app_dir).unwrap();
 
         assert!(
             staged_dir.join("NeverMoved.app").is_dir(),

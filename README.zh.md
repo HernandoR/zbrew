@@ -199,8 +199,8 @@ zbx jq --version                # 运行软件包，但不链接、不保留
 
 ## Cask
 
-Cask 是 Homebrew 中直接分发预编译应用程序、而不是 bottle 的软件包。zbrew 支持
-cask 可以声明的两类构件：
+Cask 是 Homebrew 中直接分发预编译应用程序、而不是 bottle 的软件包。Cask 以构件
+（artifact）的形式声明自己的内容，其中 zbrew 支持两类：
 
 - `binary` —— 命令行可执行文件。它会放进 keg 的 `bin` 目录，并像其他命令一样被
   链接到 prefix 中。
@@ -212,19 +212,36 @@ cask 可以声明的两类构件：
 使用 `--cask`，或者直接用 Homebrew 的 token 来指定一个 cask：
 
 ```bash
-zb install --cask docker-desktop
-zb install homebrew/cask/docker-desktop   # 等价写法
-zb uninstall --cask docker-desktop        # 会一并删除 .app 应用程序包
+zb install --cask iterm2                  # 一个应用程序
+zb install --cask visual-studio-code      # 应用程序及其 `code` 命令
+zb install homebrew/cask/iterm2           # 与第一行等价
+zb uninstall --cask iterm2                # 会一并删除 .app 应用程序包
 ```
+
+Cask 经常会安装一个位于其应用程序包内部的命令 —— `visual-studio-code` 的 `code`
+命令就是如此。它们会作为同一个软件包一起安装。
 
 `ZBREW_APPDIR` 用于设置 `.app` 的安装位置。在 macOS 上默认为 `/Applications`，
 在其他系统上默认为 `$ZBREW_PREFIX/Applications`，因为 `.app` 在 macOS 之外没有
 意义。zbrew 绝不会覆盖不是自己安装的应用程序包：如果应用程序目录中该名称已被占用，
 安装会报告冲突并停止，而不会替换你自己放进去的应用程序。
 
-并非所有 cask 都已经可以安装。以 `.dmg` 磁盘映像分发应用程序的 cask 会被拒绝，
-并给出明确说明 —— zbrew 只能解包 tar 和 zip 归档，尚不支持磁盘映像。安装 `pkg`
-安装包的 cask 同样会被拒绝。
+Cask 会被安装到 zbrew 自己的目录树中，而不是 Homebrew 的目录树。如果某个 cask
+要求安装到 `/usr/local/bin/docker`，zbrew 会保留 `docker` 这个名字，并把它安装到
+自己的 prefix 下。
+
+### Cask 目前还做不到的事
+
+在使用 cask 之前，有两点限制值得了解：
+
+- **磁盘映像。** zbrew 只能解包 tar 和 zip 归档。下载内容为 `.dmg` 的 cask 会被
+  拒绝并给出明确说明，这排除了相当一部分 cask —— 例如 `ghostty` 和
+  `docker-desktop`。安装 `pkg` 的 cask 同样会被拒绝。
+- **其他构件类型会被忽略。** Cask 还会声明 `manpage`、`zsh_completion`、
+  `bash_completion`、`fish_completion`、`zap`、`uninstall` 等构件。zbrew 只安装
+  `binary` 和 `app` 构件，其余的会被静默跳过，因此 cask 的手册页和 shell 补全不会
+  被安装；`zb uninstall` 删除的是已安装的内容，而不会执行 cask 自带的 `uninstall`
+  或 `zap` 步骤。
 
 ## 手册页 (Manual pages)
 

@@ -40,7 +40,7 @@ impl Installer {
         // prefix, so `unlink_keg` cannot see them. They have to go before the
         // keg does: the symlinks inside it are the only record of where they
         // were installed (issue #54).
-        super::cask::remove_installed_apps(&keg_path)?;
+        super::cask::remove_installed_apps(&keg_path, &self.app_dir)?;
 
         // `unlink_keg` discovers what to remove by walking the keg, so if the
         // keg files were deleted by hand it finds nothing and the prefix keeps

@@ -843,10 +843,15 @@ mod tests {
             .await;
 
         let mut installer = env.cask_installer();
-        installer
+        let first = installer
             .install(&["cask:testapp".to_string()], true)
             .await
             .unwrap();
+        assert!(
+            first.failed.is_empty(),
+            "the first install must succeed for the reinstall to mean anything: {:?}",
+            first.failed
+        );
 
         let outcome = installer
             .install(&["cask:testapp".to_string()], true)

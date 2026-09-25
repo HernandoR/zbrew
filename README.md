@@ -210,7 +210,8 @@ Each command has a help page. Run `zb <command> --help` to read it.
 ## Casks
 
 A cask is a Homebrew package that ships a prebuilt application rather than a
-bottle. zbrew installs the two artifact kinds a cask can declare:
+bottle. A cask declares its contents as artifacts, of which zbrew installs
+two kinds:
 
 - `binary` — a command-line executable. It lands in the keg's `bin` directory
   and is linked into the prefix like any other command.
@@ -223,10 +224,15 @@ bottle. zbrew installs the two artifact kinds a cask can declare:
 Name a cask with `--cask`, or by the token Homebrew uses:
 
 ```bash
-zb install --cask docker-desktop
-zb install homebrew/cask/docker-desktop   # the same thing
-zb uninstall --cask docker-desktop        # takes the .app bundle with it
+zb install --cask iterm2                  # an application
+zb install --cask visual-studio-code      # an application and its `code` command
+zb install homebrew/cask/iterm2           # the same as the first line
+zb uninstall --cask iterm2                # takes the .app bundle with it
 ```
+
+A cask often installs a command that lives inside its own application bundle —
+`visual-studio-code` does, and that is what its `code` command is. Those are
+installed together, as one package.
 
 `ZBREW_APPDIR` sets where `.app` bundles go. It defaults to `/Applications` on
 macOS and to `$ZBREW_PREFIX/Applications` elsewhere, since a `.app` means
@@ -234,10 +240,24 @@ nothing off macOS. zbrew never overwrites a bundle it did not install: a name
 already taken in the app directory is reported as a conflict and the install
 stops rather than replacing an application you put there yourself.
 
-Not every cask can be installed yet. A cask that ships its application in a
-`.dmg` disk image is refused with an error saying so — zbrew unpacks tar and
-zip archives, and disk images are not supported. Casks that install `pkg`
-installers are refused for the same reason.
+Casks are placed in zbrew's own tree, not Homebrew's. Where a cask asks for
+`/usr/local/bin/docker`, zbrew keeps the name and installs `docker` into its
+own prefix.
+
+### What a cask can still not do
+
+Two limits are worth knowing before you reach for a cask:
+
+- **Disk images.** zbrew unpacks tar and zip archives. A cask whose download is
+  a `.dmg` is refused with an error saying so, which rules out a good share of
+  them — `ghostty` and `docker-desktop` among others. Casks that install a
+  `pkg` are refused for the same reason.
+- **Other artifact kinds are ignored.** Casks also declare `manpage`,
+  `zsh_completion`, `bash_completion`, `fish_completion`, `zap`, `uninstall`
+  and more. zbrew installs the `binary` and `app` artifacts and silently skips
+  the rest, so a cask's manual page and shell completions do not arrive, and
+  `zb uninstall` removes what was installed rather than running the cask's own
+  `uninstall` or `zap` steps.
 
 ## Manual pages
 

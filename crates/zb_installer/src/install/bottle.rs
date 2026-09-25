@@ -207,12 +207,14 @@ impl Installer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn cleanup_failed_install(
         linker: &Linker,
         cellar: &Cellar,
         name: &str,
         version: &str,
         keg_path: &Path,
+        app_dir: &Path,
         unlink: bool,
     ) {
         if unlink && let Err(e) = linker.unlink_keg(keg_path) {
@@ -224,7 +226,7 @@ impl Installer {
             );
         }
 
-        if unlink && let Err(e) = super::cask::remove_installed_apps(keg_path) {
+        if unlink && let Err(e) = super::cask::remove_installed_apps(keg_path, app_dir) {
             warn!(
                 formula = %name,
                 version = %version,
@@ -261,17 +263,20 @@ pub(super) struct FailedInstallGuard<'a> {
     name: &'a str,
     version: &'a str,
     keg_path: &'a Path,
+    app_dir: &'a Path,
     unlink: bool,
     armed: bool,
 }
 
 impl<'a> FailedInstallGuard<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         linker: &'a Linker,
         cellar: &'a Cellar,
         name: &'a str,
         version: &'a str,
         keg_path: &'a Path,
+        app_dir: &'a Path,
         unlink: bool,
     ) -> Self {
         Self {
@@ -280,6 +285,7 @@ impl<'a> FailedInstallGuard<'a> {
             name,
             version,
             keg_path,
+            app_dir,
             unlink,
             armed: true,
         }
@@ -299,6 +305,7 @@ impl Drop for FailedInstallGuard<'_> {
                 self.name,
                 self.version,
                 self.keg_path,
+                self.app_dir,
                 self.unlink,
             );
         }
