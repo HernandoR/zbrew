@@ -34,7 +34,10 @@ pub async fn execute(
         return Err(zb_core::Error::NotInstalled { name });
     }
 
-    print_header(&name, installed.as_ref(), metadata.as_ref());
+    // Headed by what the user would type and what `zb list` shows, not by
+    // the `cask:` key the database happens to store it under.
+    let display_name = name.strip_prefix("cask:").unwrap_or(&name);
+    print_header(display_name, installed.as_ref(), metadata.as_ref());
     print_installation(installer, installed.as_ref());
     if let Some(formula) = metadata.as_ref() {
         print_dependencies(formula);

@@ -20,6 +20,7 @@ pub async fn execute(
     // Reported at the end so explicit-arg upgrades still run; we exit
     // non-zero afterwards rather than discard partial progress.
     let mut missing: Vec<String> = Vec::new();
+    let mut unsupported: Vec<zb_core::PackageFailure> = Vec::new();
 
     let outdated = if formulas.is_empty() {
         ui.heading("Checking for outdated packages...".to_string())
@@ -41,6 +42,21 @@ pub async fn execute(
         }
         let mut outdated = Vec::new();
         for name in &normalized {
+            // `is_outdated` compares against the formula API, which has
+            // nothing to say about a cask: it would 404 and abort the whole
+            // batch. Record it as this package's own failure instead, the way
+            // a name that is not installed already is, so the rest still
+            // upgrade and the command still exits non-zero.
+            if let Some(token) = name.strip_prefix("cask:") {
+                let error = zb_core::Error::UnsupportedFormula {
+                    name: token.to_string(),
+                    reason: "zb upgrade upgrades formulas, not casks".to_string(),
+                };
+                ui.error(format!("{token}: {error}")).map_err(ui_error)?;
+                unsupported.push(zb_core::PackageFailure::new(token, error));
+                continue;
+            }
+
             match installer.is_outdated(name).await {
                 Ok(Some(pkg)) => outdated.push(pkg),
                 Ok(None) => {
@@ -56,7 +72,9 @@ pub async fn execute(
             }
         }
         if outdated.is_empty() {
-            if let Some(e) = zb_core::collapse_failures(not_installed_failures(missing)) {
+            let mut failures = not_installed_failures(missing);
+            failures.extend(unsupported);
+            if let Some(e) = zb_core::collapse_failures(failures) {
                 return Err(e);
             }
             ui.info("All specified packages are up to date.".to_string())
@@ -170,6 +188,7 @@ pub async fn execute(
     // the first upgrade ran, and they must be reported alongside the upgrade
     // failures rather than dropped whenever an upgrade also failed.
     let mut failures = not_installed_failures(missing);
+    failures.extend(unsupported);
 
     for pkg in &outdated {
         let name = &pkg.name;
@@ -320,6 +339,63 @@ mod tests {
                 "{name}'s old keg was left behind"
             );
         }
+    }
+
+    /// A cask cannot be upgraded through the formula API, and asking must not
+    /// take the rest of the batch down with it. Before bare names resolved to
+    /// installed casks this could not happen; now that they do, the lookup
+    /// would 404 and `zb upgrade docker upc` would exit before reaching `upc`.
+    #[tokio::test]
+    async fn a_cask_is_reported_without_aborting_the_batch() {
+        let server = MockServer::start().await;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("zbrew");
+        let prefix = tmp.path().join("homebrew");
+
+        mount_upgradable(&server, "upcask").await;
+
+        let mut installer = make_installer(&root, &prefix, &server.uri());
+        install_at_1_0_0(&mut installer, &["upcask"]).await;
+        record_installed_cask(&root, "dockerdesktop");
+
+        let mut ui = StdUi::new();
+        let err = super::execute(
+            &mut installer,
+            names(&["dockerdesktop", "upcask"]),
+            false,
+            false,
+            &mut ui,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                zb_core::Error::UnsupportedFormula { ref name, .. } if name == "dockerdesktop"
+            ),
+            "the cask must be named as the reason, got {err:?}"
+        );
+        assert_eq!(
+            installer.get_installed("upcask").unwrap().version,
+            "2.0.0",
+            "the formula after the cask was never reached"
+        );
+    }
+
+    /// Record a cask keg directly, since installing one needs a real cask
+    /// artifact the mock server does not serve.
+    fn record_installed_cask(root: &std::path::Path, token: &str) {
+        let mut db = zb_store::Database::open(&root.join("db/zb.sqlite3")).unwrap();
+        let tx = db.transaction().unwrap();
+        tx.record_install(
+            &format!("cask:{token}"),
+            "1.0.0",
+            "caskkey",
+            zb_store::InstallReason::Retained,
+        )
+        .unwrap();
+        tx.commit().unwrap();
     }
 
     /// Names that were never installed are collected and reported at the end,
