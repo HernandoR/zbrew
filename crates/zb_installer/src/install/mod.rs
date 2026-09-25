@@ -444,6 +444,19 @@ pub fn create_installer(
     let locks_dir = root.join("locks");
     fs::create_dir_all(&locks_dir).map_err(Error::store("failed to create locks directory"))?;
 
+    // Uninstall only trusts a keg link whose target is an absolute path inside
+    // the app directory, so a relative app directory would install bundles it
+    // can never remove. Refuse it up front rather than discover it then.
+    let app_dir = default_app_dir(prefix);
+    if !app_dir.is_absolute() {
+        return Err(Error::InvalidArgument {
+            message: format!(
+                "ZBREW_APPDIR must be an absolute path, got '{}'",
+                app_dir.display()
+            ),
+        });
+    }
+
     let parallel_downloader = ParallelDownloader::with_concurrency(blob_cache, concurrency);
 
     Ok(Installer {
@@ -454,7 +467,7 @@ pub fn create_installer(
         linker,
         db,
         prefix: prefix.to_path_buf(),
-        app_dir: default_app_dir(prefix),
+        app_dir,
         locks_dir,
     })
 }
@@ -864,6 +877,78 @@ mod tests {
             outcome.failed
         );
         assert!(env.app_dir().join("Test.app/Contents/Info.plist").exists());
+    }
+
+    /// Installing a newer version of an app cask retires the old install
+    /// whole: its keg, its bundle and its database row. Retiring only the
+    /// bundle left the 1.0.0 keg in the cellar holding a symlink into the
+    /// bundle the 2.0.0 keg now owns -- a trap for anything that later walks
+    /// stale kegs -- and nothing (not `zb doctor`, which keys orphans by name)
+    /// could ever report it.
+    #[tokio::test]
+    async fn installing_a_newer_app_cask_retires_the_old_keg_with_its_bundle() {
+        let env = TestEnv::new().await;
+
+        let archive = create_cask_app_tarball("Test.app");
+        let archive_sha = sha256_hex(&archive);
+        Mock::given(method("GET"))
+            .and(path("/downloads/testapp.tar.gz"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(archive))
+            .mount(&env.server)
+            .await;
+
+        // The API answers 1.0.0 exactly once, then 2.0.0.
+        for (version, times) in [("1.0.0", Some(1u64)), ("2.0.0", None)] {
+            let mock = Mock::given(method("GET"))
+                .and(path("/cask/testapp.json"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"token":"testapp","version":"{version}","url":"{uri}/downloads/testapp.tar.gz",
+                        "sha256":"{archive_sha}","artifacts":[{{"app":["Test.app"]}}]}}"#,
+                uri = env.uri()
+            )));
+            match times {
+                Some(n) => mock.up_to_n_times(n).mount(&env.server).await,
+                None => mock.mount(&env.server).await,
+            }
+        }
+
+        let mut installer = env.cask_installer();
+        let first = installer
+            .install(&["cask:testapp".to_string()], true)
+            .await
+            .unwrap();
+        assert!(first.failed.is_empty(), "{:?}", first.failed);
+        let old_keg = env.root.join("cellar/cask:testapp/1.0.0");
+        assert!(old_keg.exists(), "precondition: the 1.0.0 keg was created");
+
+        let second = installer
+            .install(&["cask:testapp".to_string()], true)
+            .await
+            .unwrap();
+        assert!(second.failed.is_empty(), "{:?}", second.failed);
+
+        assert_eq!(
+            installer.db.get_installed("cask:testapp").unwrap().version,
+            "2.0.0"
+        );
+        assert!(
+            !old_keg.exists(),
+            "the 1.0.0 keg must not linger in the cellar after 2.0.0 replaced it"
+        );
+        assert!(env.root.join("cellar/cask:testapp/2.0.0").exists());
+        assert!(
+            env.app_dir().join("Test.app/Contents/Info.plist").exists(),
+            "the new bundle must be in place"
+        );
+        assert!(
+            installer
+                .db
+                .list_keg_files()
+                .unwrap()
+                .iter()
+                .all(|record| record.version != "1.0.0"),
+            "keg_files rows for the retired version must be gone"
+        );
     }
 
     /// Casks and formulas are independent packages. A formula that fails must

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use tracing::warn;
-use zb_core::{ConflictedLink, Error, formula_token, validate_destructive_path};
+use zb_core::{ConflictedLink, Error, validate_destructive_path};
 use zb_net::DownloadRequest;
 use zb_store::InstallReason;
 
@@ -249,7 +249,6 @@ impl Installer {
         let cask = resolve_cask(token, &cask_json)?;
 
         let app_dir = self.app_dir.clone();
-        let superseded_apps = self.apps_installed_by(&cask.install_name, &app_dir);
 
         let blob_path = self
             .downloader
@@ -263,6 +262,19 @@ impl Installer {
             )
             .await?;
 
+        // The previous install of this cask goes first, the way `upgrade`
+        // retires an old bottle: after the download, so a failed download
+        // leaves it intact, and before the failure guard is armed, so the
+        // guard only ever tears down the keg this install created. Its keg,
+        // its prefix links, its bundles and its database row all go together.
+        // Retiring only the bundles, as this used to, left the old keg in the
+        // cellar on a version bump -- holding a symlink into the bundle the
+        // new keg now owns -- and let a failed same-version reinstall wipe a
+        // keg the database still listed as installed.
+        if let Some(previous) = self.db.get_installed(&cask.install_name) {
+            self.uninstall_by_version(&cask.install_name, &previous.version)?;
+        }
+
         let keg_path = self.cellar.keg_path(&cask.install_name, &cask.version);
         let mut cleanup = FailedInstallGuard::new(
             &self.linker,
@@ -273,18 +285,6 @@ impl Installer {
             &app_dir,
             link,
         );
-
-        // Before staging, not after. Staging replaces the keg symlinks that
-        // record where the previous install's bundles went, and those links
-        // are the only thing that attributes them to this cask -- past that
-        // point a bundle left in the app directory can never be found again,
-        // whether the install goes on to succeed, to fail, or to skip linking
-        // entirely. Removing them here costs a failed reinstall the old
-        // bundle; leaving them stranded with no owner is the state issue #54
-        // was about.
-        for app in &superseded_apps {
-            remove_installed_app(app)?;
-        }
 
         let staging = CaskStaging::new(&cask, &keg_path);
         if zb_extract::is_archive(&blob_path)? {
@@ -321,22 +321,6 @@ impl Installer {
 
         cleanup.disarm();
         Ok(())
-    }
-
-    /// The bundles in `app_dir` that the currently recorded install of
-    /// `install_name` put there, or nothing when it is not installed.
-    ///
-    /// Best effort: a keg whose staging directory cannot be read has no
-    /// bundles worth retiring, and failing the install over it would help
-    /// nobody.
-    fn apps_installed_by(&self, install_name: &str, app_dir: &Path) -> Vec<PathBuf> {
-        let Some(keg) = self.db.get_installed(install_name) else {
-            return Vec::new();
-        };
-        let keg_path = self
-            .cellar
-            .keg_path(formula_token(install_name), &keg.version);
-        installed_app_paths(&keg_path, app_dir).unwrap_or_default()
     }
 }
 
@@ -670,12 +654,24 @@ fn move_app_into_place(staged: &Path, target: &Path) -> Result<(), Error> {
     }
 
     // A rename across filesystems fails with EXDEV, and the cellar and the app
-    // directory are routinely on different ones.
+    // directory are routinely on different ones. A copy that dies part-way
+    // (out of space, an unreadable file inside the bundle) has already
+    // written into the app directory, at a path that did not exist on entry
+    // and that nothing else can account for: the caller's rollback only knows
+    // about bundles that were fully moved, and the keg entry is still a real
+    // directory so uninstall would not find it either. So the copy cleans up
+    // after itself. The staged bundle is untouched at that point, so nothing
+    // is lost.
     if fs::rename(staged, target).is_err() {
-        copy_path_recursive(staged, target)?;
-        remove_path_any(staged).map_err(Error::store(
-            "failed to remove the staged app after copying it",
-        ))?;
+        let copied = copy_path_recursive(staged, target).and_then(|()| {
+            remove_path_any(staged).map_err(Error::store(
+                "failed to remove the staged app after copying it",
+            ))
+        });
+        if let Err(e) = copied {
+            let _ = remove_path_any(target);
+            return Err(e);
+        }
     }
 
     #[cfg(unix)]
