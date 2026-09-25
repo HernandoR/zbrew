@@ -255,19 +255,50 @@ fn test_list_installed_formulas() {
 fn test_info_finds_installed_formula() {
     let t = TestEnv::new();
 
+    // Like `brew info`, describing a package you have not installed is the
+    // point: it is how you decide whether to install it.
     let output = t.zb(&["info", "jq"]);
     assert_success(&output, "zb info jq (not installed)");
-    assert_stdout_contains(&output, "not installed");
+    assert_stdout_contains(&output, "jq: stable");
+    assert_stdout_contains(&output, "Not installed");
+    // jq depends on oniguruma, so the section is real metadata, not a header.
+    assert_stdout_contains(&output, "Dependencies");
 
     assert_success(&t.zb(&["install", "jq"]), "zb install jq");
 
     let output = t.zb(&["info", "jq"]);
     assert_success(&output, "zb info jq");
+    assert_stdout_contains(&output, "Cellar/jq");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Name:") && !stdout.contains("not installed"),
+        stdout.contains("Installed") && !stdout.contains("Not installed"),
         "stdout: {stdout}"
     );
+}
+
+/// `--json` exists so scripts stop parsing the coloured listing; it has to be
+/// valid JSON that names what is installed.
+#[test]
+#[ignore = "integration test"]
+fn test_list_json_is_machine_readable() {
+    let t = TestEnv::new();
+
+    assert_success(&t.zb(&["install", "jq"]), "zb install jq");
+
+    let output = t.zb(&["list", "--json"]);
+    assert_success(&output, "zb list --json");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let entries: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not valid JSON ({e}): {stdout}"));
+
+    let names: Vec<&str> = entries
+        .as_array()
+        .expect("a JSON array")
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(|n| n.as_str()))
+        .collect();
+    assert!(names.contains(&"jq"), "jq missing from {stdout}");
 }
 
 #[test]
