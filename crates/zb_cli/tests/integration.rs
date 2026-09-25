@@ -324,6 +324,43 @@ fn reset_refuses_dangerous_root_and_prefix() {
     }
 }
 
+/// `brew` with no arguments prints its usage summary and succeeds. Running a
+/// tool to ask what it does is not an error, so `zb | less` must page the help
+/// and `zb && echo ok` must print `ok` -- neither of which holds when clap
+/// sends the help to stderr and exits 2.
+///
+/// Not marked `#[ignore]` like the network tests above: it exits before
+/// touching the root or the prefix.
+#[test]
+fn a_bare_zb_prints_help_to_stdout_and_succeeds() {
+    let output = Command::new(env!("CARGO_BIN_EXE_zb"))
+        .output()
+        .expect("failed to execute zb");
+
+    assert_success(&output, "bare zb");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Usage: zb"),
+        "the help belongs on stdout, got stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn a_bare_zbx_prints_usage_to_stdout_and_succeeds() {
+    let output = Command::new(env!("CARGO_BIN_EXE_zbx"))
+        .output()
+        .expect("failed to execute zbx");
+
+    assert_success(&output, "bare zbx");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Usage: zbx"),
+        "the usage belongs on stdout, got stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
 /// The CLI refuses a prefix too long to patch into this machine's bottles.
 ///
 /// macOS only: Linux imposes no budget, because ELF rewriting resizes the
