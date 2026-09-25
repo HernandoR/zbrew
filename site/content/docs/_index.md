@@ -216,8 +216,8 @@ zb install --cask visual-studio-code   # an application and its `code` command
 zb uninstall --cask iterm2             # uninstall it, .app bundle included
 ```
 
-`ZBREW_APPDIR` sets where `.app` bundles go — `/Applications` on macOS,
-`$ZBREW_PREFIX/Applications` elsewhere. A name already taken in the app
+`ZBREW_APPDIR` sets where `.app` bundles go (an absolute path) — `/Applications`
+on macOS, `$ZBREW_PREFIX/Applications` elsewhere. A name already taken in the app
 directory is reported as a conflict, never overwritten.
 
 Two limits are worth knowing. A cask whose download is a `.dmg` disk image

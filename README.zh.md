@@ -221,7 +221,7 @@ zb uninstall --cask iterm2                # 会一并删除 .app 应用程序包
 Cask 经常会安装一个位于其应用程序包内部的命令 —— `visual-studio-code` 的 `code`
 命令就是如此。它们会作为同一个软件包一起安装。
 
-`ZBREW_APPDIR` 用于设置 `.app` 的安装位置。在 macOS 上默认为 `/Applications`，
+`ZBREW_APPDIR` 用于设置 `.app` 的安装位置，必须是绝对路径。在 macOS 上默认为 `/Applications`，
 在其他系统上默认为 `$ZBREW_PREFIX/Applications`，因为 `.app` 在 macOS 之外没有
 意义。zbrew 绝不会覆盖不是自己安装的应用程序包：如果应用程序目录中该名称已被占用，
 安装会报告冲突并停止，而不会替换你自己放进去的应用程序。

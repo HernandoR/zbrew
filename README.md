@@ -234,9 +234,9 @@ A cask often installs a command that lives inside its own application bundle —
 `visual-studio-code` does, and that is what its `code` command is. Those are
 installed together, as one package.
 
-`ZBREW_APPDIR` sets where `.app` bundles go. It defaults to `/Applications` on
-macOS and to `$ZBREW_PREFIX/Applications` elsewhere, since a `.app` means
-nothing off macOS. zbrew never overwrites a bundle it did not install: a name
+`ZBREW_APPDIR` sets where `.app` bundles go; it must be an absolute path. It
+defaults to `/Applications` on macOS and to `$ZBREW_PREFIX/Applications`
+elsewhere, since a `.app` means nothing off macOS. zbrew never overwrites a bundle it did not install: a name
 already taken in the app directory is reported as a conflict and the install
 stops rather than replacing an application you put there yourself.
 

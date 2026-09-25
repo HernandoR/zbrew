@@ -59,23 +59,55 @@ pub struct Installer {
     locks_dir: PathBuf,
 }
 
-/// Where `.app` bundles from casks are installed.
-///
-/// Homebrew puts them in `/Applications` and lets `HOMEBREW_CASK_OPTS
-/// --appdir` move them elsewhere; `ZBREW_APPDIR` is zbrew's equivalent. A
-/// `.app` is a macOS concept and only macOS has a system-wide `/Applications`
-/// worth writing to, so everywhere else the default is inside the prefix
-/// zbrew already owns.
+/// Where `.app` bundles from casks are installed when nothing says otherwise:
+/// `/Applications` on macOS, and inside the prefix zbrew already owns
+/// everywhere else, since a `.app` is a macOS concept and only macOS has a
+/// system-wide `/Applications` worth writing to.
 fn default_app_dir(prefix: &Path) -> PathBuf {
-    if let Some(configured) = std::env::var_os("ZBREW_APPDIR") {
-        return PathBuf::from(configured);
-    }
-
     if cfg!(target_os = "macos") {
         PathBuf::from("/Applications")
     } else {
         prefix.join("Applications")
     }
+}
+
+/// The app directory an installer built by [`create_installer`] uses.
+///
+/// `configured` is `ZBREW_APPDIR` — zbrew's equivalent of Homebrew's
+/// `--appdir` — and wins when set. It has to be absolute: uninstall only
+/// trusts a keg link whose target is an absolute path inside the app
+/// directory, so a relative one would install bundles that can never be
+/// removed. That is refused up front, naming the variable, rather than
+/// discovered at uninstall time.
+///
+/// Without it the default applies. Off macOS that is derived from the prefix,
+/// and `--prefix ./local` is a prefix the CLI passes through as written, so
+/// the derived path can be relative too. That is not the user's mistake and
+/// it must not make `zb list` unusable, so it is resolved against `cwd` —
+/// the same directory a relative prefix is already relative to.
+fn resolve_app_dir(
+    configured: Option<PathBuf>,
+    prefix: &Path,
+    cwd: &Path,
+) -> Result<PathBuf, Error> {
+    if let Some(configured) = configured {
+        if !configured.is_absolute() {
+            return Err(Error::InvalidArgument {
+                message: format!(
+                    "ZBREW_APPDIR must be an absolute path, got '{}'",
+                    configured.display()
+                ),
+            });
+        }
+        return Ok(configured);
+    }
+
+    let default = default_app_dir(prefix);
+    Ok(if default.is_absolute() {
+        default
+    } else {
+        cwd.join(default)
+    })
 }
 
 #[derive(Debug)]
@@ -444,18 +476,13 @@ pub fn create_installer(
     let locks_dir = root.join("locks");
     fs::create_dir_all(&locks_dir).map_err(Error::store("failed to create locks directory"))?;
 
-    // Uninstall only trusts a keg link whose target is an absolute path inside
-    // the app directory, so a relative app directory would install bundles it
-    // can never remove. Refuse it up front rather than discover it then.
-    let app_dir = default_app_dir(prefix);
-    if !app_dir.is_absolute() {
-        return Err(Error::InvalidArgument {
-            message: format!(
-                "ZBREW_APPDIR must be an absolute path, got '{}'",
-                app_dir.display()
-            ),
-        });
-    }
+    let cwd =
+        std::env::current_dir().map_err(Error::store("failed to read the current directory"))?;
+    let app_dir = resolve_app_dir(
+        std::env::var_os("ZBREW_APPDIR").map(PathBuf::from),
+        prefix,
+        &cwd,
+    )?;
 
     let parallel_downloader = ParallelDownloader::with_concurrency(blob_cache, concurrency);
 
@@ -774,6 +801,39 @@ mod tests {
         assert!(installer.db.get_installed("survivor").is_some());
         assert!(installer.db.get_installed("casualtyone").is_none());
         assert!(installer.db.get_installed("casualtytwo").is_none());
+    }
+
+    /// `ZBREW_APPDIR` wins, and only it is blamed when it is unusable.
+    #[test]
+    fn a_configured_app_dir_wins_and_must_be_absolute() {
+        let prefix = Path::new("/opt/zbrew");
+        let cwd = Path::new("/home/user");
+
+        assert_eq!(
+            resolve_app_dir(Some(PathBuf::from("/Apps")), prefix, cwd).unwrap(),
+            PathBuf::from("/Apps")
+        );
+
+        let err = resolve_app_dir(Some(PathBuf::from("Apps")), prefix, cwd).unwrap_err();
+        assert!(err.to_string().contains("ZBREW_APPDIR"), "got: {err}");
+    }
+
+    /// A relative prefix is the CLI's doing, not the user's `ZBREW_APPDIR`,
+    /// and it must not make every command unusable: the derived app
+    /// directory is resolved against the directory the prefix is already
+    /// relative to.
+    #[test]
+    fn a_prefix_derived_app_dir_is_never_relative() {
+        let cwd = Path::new("/home/user/project");
+
+        let resolved = resolve_app_dir(None, Path::new("./local"), cwd).unwrap();
+        assert!(resolved.is_absolute(), "got {}", resolved.display());
+        if cfg!(not(target_os = "macos")) {
+            assert_eq!(resolved, cwd.join("./local/Applications"));
+        }
+
+        let resolved = resolve_app_dir(None, Path::new("/opt/zbrew"), cwd).unwrap();
+        assert!(resolved.is_absolute());
     }
 
     /// An `app` cask is installed end to end: the bundle is unpacked, moved
