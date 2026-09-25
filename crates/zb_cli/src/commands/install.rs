@@ -6,15 +6,31 @@ use std::time::Instant;
 use zb_core::{InstallProgress, ProgressCallback};
 
 use crate::ui::StdUi;
-use crate::utils::{normalize_formula_name, suggest_homebrew, suggest_missing_formula_matches};
+use crate::utils::{normalize_install_target, suggest_homebrew, suggest_missing_formula_matches};
+
+/// The three switches `zb install` takes, kept together so a call site says
+/// which flag it is passing instead of lining up three bare booleans.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InstallOptions {
+    /// Every argument names a cask, as `zb install --cask <token>`.
+    pub cask: bool,
+    /// Leave the prefix alone: install into the cellar but create no symlinks.
+    pub no_link: bool,
+    /// Build from source rather than pouring a bottle.
+    pub build_from_source: bool,
+}
 
 pub async fn execute(
     installer: &mut zb_installer::Installer,
     formulas: Vec<String>,
-    no_link: bool,
-    build_from_source: bool,
+    options: InstallOptions,
     ui: &mut StdUi,
 ) -> Result<(), zb_core::Error> {
+    let InstallOptions {
+        cask,
+        no_link,
+        build_from_source,
+    } = options;
     let start = Instant::now();
     ui.heading(format!(
         "Installing {}...",
@@ -25,7 +41,7 @@ pub async fn execute(
     let mut normalized_names = Vec::new();
     let mut cask_names = Vec::new();
     for formula in &formulas {
-        match normalize_formula_name(formula) {
+        match normalize_install_target(formula, cask) {
             Ok(name) => {
                 if name.starts_with("cask:") {
                     cask_names.push(name);
@@ -55,8 +71,14 @@ pub async fn execute(
                 let handled_missing = suggest_missing_formula_matches(installer, &e).await;
 
                 if !handled_missing {
+                    // Rebuilt from the arguments rather than reused from
+                    // the loop above, because that loop sorted the names into
+                    // two lists. `--cask` is part of what was asked for, so
+                    // the hint keeps it.
                     for formula in &formulas {
-                        suggest_homebrew(formula, &e);
+                        let name = normalize_install_target(formula, cask)
+                            .unwrap_or_else(|_| formula.clone());
+                        suggest_homebrew(&name, &e);
                     }
                 }
                 return Err(e);
@@ -350,8 +372,7 @@ mod tests {
         super::execute(
             &mut installer,
             names(&["multia", "multib", "multic"]),
-            false,
-            false,
+            super::InstallOptions::default(),
             &mut ui,
         )
         .await
@@ -392,8 +413,7 @@ mod tests {
         let err = super::execute(
             &mut installer,
             names(&["realpkg", "ghostpkg"]),
-            false,
-            false,
+            super::InstallOptions::default(),
             &mut ui,
         )
         .await
@@ -434,8 +454,7 @@ mod tests {
         let result = super::execute(
             &mut installer,
             names(&["okpkg1", "brokenpkg", "okpkg2"]),
-            false,
-            false,
+            super::InstallOptions::default(),
             &mut ui,
         )
         .await;
@@ -480,8 +499,7 @@ mod tests {
         let err = super::execute(
             &mut installer,
             names(&["livepkg", "deadpkg1", "deadpkg2"]),
-            false,
-            false,
+            super::InstallOptions::default(),
             &mut ui,
         )
         .await

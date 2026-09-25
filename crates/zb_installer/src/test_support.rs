@@ -81,6 +81,33 @@ pub(crate) fn create_bottle_tarball_with_entries(
     encoder.finish().unwrap()
 }
 
+/// A gzipped tarball holding one `.app` bundle at its root, the way a cask
+/// that ships an application archive is laid out.
+pub(crate) fn create_cask_app_tarball(app_name: &str) -> Vec<u8> {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::io::Write;
+    use tar::Builder;
+
+    let mut builder = Builder::new(Vec::new());
+    for (rel_path, content) in [
+        ("Contents/Info.plist", "plist"),
+        ("Contents/MacOS/app-cli", "#!/bin/sh\necho from-app"),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_path(format!("{app_name}/{rel_path}")).unwrap();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder.append(&header, content.as_bytes()).unwrap();
+    }
+
+    let tar_data = builder.into_inner().unwrap();
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&tar_data).unwrap();
+    encoder.finish().unwrap()
+}
+
 pub(crate) fn sha256_hex(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -275,6 +302,21 @@ impl TestEnv {
         format!("{}{}", self.uri(), bottle_path(name, version))
     }
 
+    /// Where an installer built here puts a cask's `.app` bundles. Inside the
+    /// temporary directory, never the machine's real `/Applications`.
+    pub(crate) fn app_dir(&self) -> PathBuf {
+        self._tmp.path().join("Applications")
+    }
+
+    /// An installer whose cask API and app directory both point at this env.
+    pub(crate) fn cask_installer(&self) -> Installer {
+        self.installer_with(
+            ApiClient::with_base_url(format!("{}/formula", self.uri()))
+                .unwrap()
+                .with_cask_base_url(format!("{}/cask", self.uri())),
+        )
+    }
+
     /// An installer reading formulae from the mock server's core API.
     pub(crate) fn installer(&self) -> Installer {
         self.installer_with(ApiClient::with_base_url(format!("{}/formula", self.uri())).unwrap())
@@ -300,6 +342,7 @@ impl TestEnv {
             self.prefix.clone(),
             self.root.join("locks"),
         )
+        .with_app_dir(self.app_dir())
     }
 
     /// Answer `GET /formula/<name>.json` with `body`.

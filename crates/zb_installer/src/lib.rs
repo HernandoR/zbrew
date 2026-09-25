@@ -12,7 +12,6 @@
 #![deny(unreachable_pub)]
 
 pub(crate) mod build;
-mod cask;
 pub(crate) mod cellar;
 pub(crate) mod homebrew;
 pub(crate) mod install;
