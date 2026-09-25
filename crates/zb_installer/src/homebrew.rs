@@ -1,6 +1,98 @@
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use zb_core::Error;
+use tracing::debug;
+use zb_core::{Error, Formula};
+
+/// The Homebrew installation on this machine, as a source of formula
+/// metadata the JSON API no longer serves.
+///
+/// Homebrew keeps the formula it installed at
+/// `<prefix>/Cellar/<name>/<version>/.brew/<name>.rb`. When a formula is
+/// dropped from homebrew-core -- `fasd` is the reported case -- that file is
+/// the only description of it left anywhere, and without it `zb migrate`
+/// silently skips a package the user still has installed.
+pub struct HomebrewCellar {
+    cellar: PathBuf,
+}
+
+impl HomebrewCellar {
+    /// Locate Homebrew, or `None` when this machine has none.
+    pub fn discover() -> Option<Self> {
+        Self::prefix_from_env()
+            .or_else(Self::prefix_from_brew)
+            .or_else(Self::prefix_from_defaults)
+            .map(|prefix| Self::at(&prefix))
+    }
+
+    pub fn at(prefix: &Path) -> Self {
+        Self {
+            cellar: prefix.join("Cellar"),
+        }
+    }
+
+    /// The formula Homebrew installed for `name`, parsed from the copy it
+    /// keeps beside the keg.
+    pub fn local_formula(&self, name: &str) -> Option<Formula> {
+        let source_path = self.formula_source_path(name)?;
+        let source = std::fs::read_to_string(&source_path).ok()?;
+
+        match zb_net::parse_core_formula_ruby(name, &source) {
+            Ok(formula) => Some(formula),
+            Err(e) => {
+                debug!("failed to parse {}: {e}", source_path.display());
+                None
+            }
+        }
+    }
+
+    /// The newest installed version's `.brew/<name>.rb`.
+    ///
+    /// Homebrew can keep several versions of a formula side by side; the
+    /// highest version is the one migration should reproduce.
+    fn formula_source_path(&self, name: &str) -> Option<PathBuf> {
+        let mut versions: Vec<String> = std::fs::read_dir(self.cellar.join(name))
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        versions.sort_by_cached_key(|version| version_order(version));
+
+        versions
+            .into_iter()
+            .rev()
+            .map(|version| {
+                self.cellar
+                    .join(name)
+                    .join(version)
+                    .join(".brew")
+                    .join(format!("{name}.rb"))
+            })
+            .find(|path| path.is_file())
+    }
+
+    fn prefix_from_env() -> Option<PathBuf> {
+        let prefix = PathBuf::from(std::env::var_os("HOMEBREW_PREFIX")?);
+        prefix.join("Cellar").is_dir().then_some(prefix)
+    }
+
+    fn prefix_from_brew() -> Option<PathBuf> {
+        let output = Command::new("brew").arg("--prefix").output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let prefix = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        prefix.join("Cellar").is_dir().then_some(prefix)
+    }
+
+    fn prefix_from_defaults() -> Option<PathBuf> {
+        ["/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"]
+            .into_iter()
+            .map(PathBuf::from)
+            .find(|prefix| prefix.join("Cellar").is_dir())
+    }
+}
 
 /// Represents a Homebrew package that can be migrated
 #[derive(Debug, Clone)]
@@ -152,9 +244,170 @@ pub fn get_homebrew_packages() -> Result<HomebrewMigrationPackages, Error> {
     let all_packages: Vec<HomebrewPackage> = formulas.into_iter().chain(casks).collect();
     Ok(categorize_packages(all_packages))
 }
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum VersionPart {
+    Number(u64),
+    Text(String),
+}
+
+/// Sort key that orders version directory names the way a human reads them,
+/// so `1.10.0` comes after `1.9.0`. Plain string order would not, and
+/// Homebrew keeps several versions of a formula side by side.
+fn version_order(version: &str) -> Vec<VersionPart> {
+    let mut parts = Vec::new();
+    let mut rest = version;
+
+    while !rest.is_empty() {
+        let digits = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        if digits > 0 {
+            match rest[..digits].parse::<u64>() {
+                Ok(number) => parts.push(VersionPart::Number(number)),
+                Err(_) => parts.push(VersionPart::Text(rest[..digits].to_string())),
+            }
+            rest = &rest[digits..];
+            continue;
+        }
+
+        let text = rest
+            .find(|c: char| c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        parts.push(VersionPart::Text(rest[..text].to_string()));
+        rest = &rest[text..];
+    }
+
+    parts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{get_test_bottle_tag, write_homebrew_keg};
+
+    const SHA: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+
+    /// Homebrew can keep several versions of a formula side by side. The one
+    /// migration should reproduce is the newest.
+    #[test]
+    fn the_newest_installed_version_supplies_the_formula() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prefix = tmp.path().join("homebrew");
+        write_homebrew_keg(&prefix, "multi", "1.9.0", &[], SHA);
+        write_homebrew_keg(&prefix, "multi", "1.10.0", &[], SHA);
+
+        let formula = HomebrewCellar::at(&prefix).local_formula("multi").unwrap();
+
+        assert_eq!(formula.versions.stable, "1.10.0");
+    }
+
+    /// The recovered formula has to be installable, not merely parseable: the
+    /// bottle it names must point at where homebrew-core's bottles live.
+    #[test]
+    fn the_recovered_formula_points_at_the_core_bottle_registry() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prefix = tmp.path().join("homebrew");
+        write_homebrew_keg(&prefix, "recovered", "1.0.0", &["somedep"], SHA);
+
+        let formula = HomebrewCellar::at(&prefix)
+            .local_formula("recovered")
+            .unwrap();
+
+        assert_eq!(formula.dependencies, ["somedep"]);
+        let bottle = formula
+            .bottle
+            .stable
+            .files
+            .get(get_test_bottle_tag())
+            .expect("a bottle for this platform");
+        assert_eq!(
+            bottle.url,
+            format!("https://ghcr.io/v2/homebrew/core/recovered/blobs/sha256:{SHA}")
+        );
+        assert_eq!(bottle.sha256, SHA);
+    }
+
+    #[test]
+    fn versions_order_by_number_rather_than_by_string() {
+        let mut versions = ["1.9.0", "1.10.0", "1.0.0", "1.10.0_1"];
+        versions.sort_by_cached_key(|v| version_order(v));
+
+        assert_eq!(versions, ["1.0.0", "1.9.0", "1.10.0", "1.10.0_1"]);
+    }
+
+    /// The formulas homebrew-core drops are overwhelmingly `@`-versioned, and
+    /// Homebrew publishes those under a `/`-separated OCI path. Recovering the
+    /// formula is worthless if the bottle URL it yields 404s.
+    #[test]
+    fn an_at_versioned_formula_recovers_a_fetchable_bottle_url() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prefix = tmp.path().join("homebrew");
+        write_homebrew_keg(&prefix, "openssl@1.1", "1.1.1w", &[], SHA);
+
+        let formula = HomebrewCellar::at(&prefix)
+            .local_formula("openssl@1.1")
+            .unwrap();
+
+        assert_eq!(formula.name, "openssl@1.1", "the keg name must not change");
+        let bottle = formula
+            .bottle
+            .stable
+            .files
+            .get(get_test_bottle_tag())
+            .expect("a bottle for this platform");
+        assert_eq!(
+            bottle.url,
+            format!("https://ghcr.io/v2/homebrew/core/openssl/1.1/blobs/sha256:{SHA}")
+        );
+    }
+
+    /// A recovered keg-only formula that reads as linkable gets symlinked
+    /// into the prefix, which is the one thing keg-only exists to prevent.
+    #[test]
+    fn a_recovered_keg_only_formula_stays_keg_only() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prefix = tmp.path().join("homebrew");
+        let brew_dir = prefix.join("Cellar/kegonlypkg/3.0.0/.brew");
+        std::fs::create_dir_all(&brew_dir).unwrap();
+        std::fs::write(
+            brew_dir.join("kegonlypkg.rb"),
+            crate::test_support::keg_only_core_formula_ruby("kegonlypkg", "3.0.0", SHA),
+        )
+        .unwrap();
+
+        let formula = HomebrewCellar::at(&prefix)
+            .local_formula("kegonlypkg")
+            .unwrap();
+
+        assert!(
+            formula.is_keg_only(),
+            "a keg-only formula must not be linked into the prefix"
+        );
+    }
+
+    #[test]
+    fn a_formula_homebrew_never_installed_has_no_local_copy() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prefix = tmp.path().join("homebrew");
+        write_homebrew_keg(&prefix, "present", "1.0.0", &[], SHA);
+
+        assert!(
+            HomebrewCellar::at(&prefix)
+                .local_formula("absent")
+                .is_none()
+        );
+    }
+
+    /// A keg left behind without its `.brew` directory -- an old Homebrew, or
+    /// a hand-edited Cellar -- must not be mistaken for a usable formula.
+    #[test]
+    fn a_keg_without_the_saved_formula_has_no_local_copy() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prefix = tmp.path().join("homebrew");
+        std::fs::create_dir_all(prefix.join("Cellar/bare/1.0.0/bin")).unwrap();
+
+        assert!(HomebrewCellar::at(&prefix).local_formula("bare").is_none());
+    }
 
     #[test]
     fn test_parse_formulas_from_json() {
