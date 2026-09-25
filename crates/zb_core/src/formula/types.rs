@@ -113,6 +113,14 @@ pub struct Formula {
     pub name: String,
     pub versions: Versions,
     pub dependencies: Vec<String>,
+    /// One-line summary, as `brew info` prints under the name. Absent from a
+    /// formula parsed out of Ruby source, which is why it is optional.
+    #[serde(default)]
+    pub desc: Option<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
+    #[serde(default)]
+    pub license: Option<String>,
     pub bottle: Bottle,
     #[serde(default)]
     pub revision: u32,

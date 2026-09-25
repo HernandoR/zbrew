@@ -328,6 +328,13 @@ impl Installer {
         Ok(outcome)
     }
 
+    /// Fetch a formula's metadata, installed or not. `zb info` needs this to
+    /// answer for a package the user is considering, the way `brew info`
+    /// does.
+    pub async fn get_formula(&self, name: &str) -> Result<zb_core::Formula, Error> {
+        self.api_client.get_formula(name).await
+    }
+
     pub fn is_installed(&self, name: &str) -> bool {
         self.db.get_installed(name).is_some()
     }

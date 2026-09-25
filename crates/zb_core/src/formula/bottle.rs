@@ -283,6 +283,9 @@ mod tests {
                 stable: "2024-01-01".to_string(),
             },
             dependencies: Vec::new(),
+            desc: None,
+            homepage: None,
+            license: None,
             bottle: Bottle {
                 stable: BottleStable { files, rebuild: 0 },
             },

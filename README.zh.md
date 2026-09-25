@@ -181,7 +181,8 @@ zb bundle dump -f out --force   # 导出到自定义文件（覆盖）
 zb uninstall jq                 # 卸载单个软件包
 zb list                         # 列出已安装的软件包
 zb list --all                   # 列出已安装的软件包，包括 zbx 临时安装
-zb info jq                      # 显示某个已安装软件包的详情
+zb list --json                  # 以 JSON 格式列出已安装的软件包
+zb info jq                      # 显示软件包的简介、占用空间和依赖
 zb update                       # 刷新缓存的软件包元数据
 zb outdated                     # 列出有新版本可用的软件包
 zb upgrade                      # 升级所有已过期的软件包
@@ -233,9 +234,8 @@ zbrew 的命令沿用 Homebrew 的名称。
 | 只运行一次软件包 | —— | `zbx jq --version` |
 | 从 Homebrew 迁移软件包 | —— | `zb migrate` |
 
-有两点差别很重要。`zb info` 只读取已安装的软件包，而 `brew info` 也能读取尚未安装的
-软件包。`zb migrate` 把你的 Homebrew 软件包迁移到 zbrew，之后还可以把它们从 Homebrew
-中删除。`zb migrate` 在删除任何内容之前都会先询问。
+有一点差别很重要。`zb migrate` 把你的 Homebrew 软件包迁移到 zbrew，之后还可以把它们
+从 Homebrew 中删除。`zb migrate` 在删除任何内容之前都会先询问。
 
 有些 Homebrew 功能目前还没有对应的 zbrew 命令，例如 `brew search`、`brew tap` 和
 `brew services`。这类工作请继续使用 Homebrew。

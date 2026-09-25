@@ -89,13 +89,22 @@ mod tests {
     #[test]
     fn list_hides_temporary_installs_unless_all() {
         let cli = Cli::try_parse_from(["zb", "list"]).unwrap();
-        assert!(matches!(cli.command, super::Commands::List { all: false }));
+        assert!(matches!(
+            cli.command,
+            super::Commands::List { all: false, .. }
+        ));
 
         let cli = Cli::try_parse_from(["zb", "list", "--all"]).unwrap();
-        assert!(matches!(cli.command, super::Commands::List { all: true }));
+        assert!(matches!(
+            cli.command,
+            super::Commands::List { all: true, .. }
+        ));
 
         let cli = Cli::try_parse_from(["zb", "list", "-a"]).unwrap();
-        assert!(matches!(cli.command, super::Commands::List { all: true }));
+        assert!(matches!(
+            cli.command,
+            super::Commands::List { all: true, .. }
+        ));
     }
 
     #[test]
@@ -155,6 +164,8 @@ pub enum Commands {
             help = "Include temporary installs created by zb run"
         )]
         all: bool,
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
     },
     /// Show information about an installed package
     Info {

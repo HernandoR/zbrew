@@ -95,6 +95,9 @@ mod tests {
                 stable: "1.0.0".to_string(),
             },
             dependencies: vec!["libfoo".to_string()],
+            desc: None,
+            homepage: None,
+            license: None,
             bottle: Bottle {
                 stable: BottleStable { files, rebuild: 0 },
             },
