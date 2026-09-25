@@ -19,7 +19,9 @@ pub(crate) mod install;
 pub(crate) mod test_support;
 
 pub use cellar::{Cellar, Linker};
-pub use homebrew::{HomebrewMigrationPackages, HomebrewPackage, get_homebrew_packages};
+pub use homebrew::{
+    HomebrewCellar, HomebrewMigrationPackages, HomebrewPackage, get_homebrew_packages,
+};
 pub use install::doctor::{DiagnosticReport, RepairSummary};
 pub use install::{
     ExecuteResult, GcOutcome, InstallPlan, Installer, Leaves, OutdatedPackage, create_installer,

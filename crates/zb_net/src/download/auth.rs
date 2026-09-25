@@ -235,18 +235,29 @@ pub(crate) async fn fetch_bearer_token_internal(
     Ok(token_response.token)
 }
 
+/// The registry scope a bottle URL pulls under, used to warm the token cache
+/// before the server has to issue a challenge.
+///
+/// The repository is everything between `/v2/` and the registry verb, which
+/// is not always three segments: an `@`-versioned formula is published under
+/// `homebrew/core/openssl/1.1`, so stopping at the third segment would key
+/// every `openssl@*` under the same scope.
 pub(crate) fn extract_scope_for_url(url: &str) -> Option<String> {
     let marker = "ghcr.io/v2/";
     let start = url.find(marker)? + marker.len();
     let remainder = &url[start..];
-    let mut parts = remainder.split('/');
-    let owner = parts.next()?;
-    let repo = parts.next()?;
-    let formula = parts.next()?;
-    if owner.is_empty() || repo.is_empty() || formula.is_empty() {
+
+    let repository = remainder
+        .split_once("/blobs/")
+        .or_else(|| remainder.split_once("/manifests/"))
+        .map(|(repository, _)| repository)?;
+
+    let segments: Vec<&str> = repository.split('/').collect();
+    if segments.len() < 3 || segments.iter().any(|segment| segment.is_empty()) {
         return None;
     }
-    Some(format!("repository:{owner}/{repo}/{formula}:pull"))
+
+    Some(format!("repository:{repository}:pull"))
 }
 
 fn parse_www_authenticate(header: &str) -> Result<(String, String, String), Error> {
@@ -374,5 +385,29 @@ mod tests {
             extract_scope_for_url("https://ghcr.io/v2/hashicorp/tap/terraform/blobs/sha256:abc")
                 .unwrap();
         assert_eq!(scope, "repository:hashicorp/tap/terraform:pull");
+    }
+
+    /// Homebrew publishes `openssl@1.1` under `openssl/1.1`, so its
+    /// repository is four segments. Keying on the first three would give
+    /// every `openssl@*` the same cache slot.
+    #[test]
+    fn extract_scope_for_url_keeps_the_whole_repository_path() {
+        let scope =
+            extract_scope_for_url("https://ghcr.io/v2/homebrew/core/openssl/1.1/blobs/sha256:abc")
+                .unwrap();
+        assert_eq!(scope, "repository:homebrew/core/openssl/1.1:pull");
+
+        let manifest =
+            extract_scope_for_url("https://ghcr.io/v2/homebrew/core/python/3.8/manifests/3.8.19")
+                .unwrap();
+        assert_eq!(manifest, "repository:homebrew/core/python/3.8:pull");
+    }
+
+    /// A URL naming no registry verb is not a pull of anything, so there is
+    /// no scope to warm the cache with.
+    #[test]
+    fn extract_scope_for_url_rejects_a_url_with_no_registry_verb() {
+        assert!(extract_scope_for_url("https://ghcr.io/v2/homebrew/core/lz4").is_none());
+        assert!(extract_scope_for_url("https://example.com/lz4.tar.gz").is_none());
     }
 }

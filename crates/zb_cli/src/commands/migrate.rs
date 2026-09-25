@@ -84,7 +84,13 @@ pub async fn execute(
 
     let formula_names: Vec<String> = packages.formulas.iter().map(|f| f.name.clone()).collect();
 
-    let (plan, planning_failures) = installer.plan_best_effort(&formula_names, false).await;
+    // Homebrew keeps the formula it installed beside each keg, which is the
+    // only description left of one homebrew-core has since dropped. Migration
+    // has to reproduce what the user actually has, so those count.
+    let local_formulas = zb_installer::HomebrewCellar::discover();
+    let (plan, planning_failures) = installer
+        .plan_best_effort(&formula_names, false, local_formulas.as_ref())
+        .await;
     if !planning_failures.is_empty() {
         ui.note(format!(
             "Skipped {} formula(s) that could not be planned:",
