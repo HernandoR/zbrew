@@ -313,8 +313,7 @@ mod tests {
         install::execute(
             &mut installer,
             vec!["checkone".to_string(), "checktwo".to_string()],
-            false,
-            false,
+            install::InstallOptions::default(),
             &mut ui,
         )
         .await
@@ -342,8 +341,7 @@ mod tests {
         install::execute(
             &mut installer,
             vec!["checkroot".to_string()],
-            false,
-            false,
+            install::InstallOptions::default(),
             &mut ui,
         )
         .await
