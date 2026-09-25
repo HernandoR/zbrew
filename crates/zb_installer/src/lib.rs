@@ -24,5 +24,5 @@ pub use homebrew::{
 };
 pub use install::doctor::{DiagnosticReport, RepairSummary};
 pub use install::{
-    ExecuteResult, GcOutcome, InstallPlan, Installer, OutdatedPackage, create_installer,
+    ExecuteResult, GcOutcome, InstallPlan, Installer, Leaves, OutdatedPackage, create_installer,
 };

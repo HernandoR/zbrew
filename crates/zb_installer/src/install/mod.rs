@@ -1,12 +1,14 @@
 mod bottle;
 mod cask;
 pub(crate) mod doctor;
+mod leaves;
 mod outdated;
 mod plan;
 mod source;
 mod uninstall;
 mod upgrade;
 
+pub use leaves::Leaves;
 pub use uninstall::GcOutcome;
 
 use std::fs::{self, File};

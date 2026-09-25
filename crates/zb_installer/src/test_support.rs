@@ -363,6 +363,33 @@ impl TestEnv {
             .await;
     }
 
+    /// Answer `GET /formula/<name>.json` with a 404, for a formula the API
+    /// does not know about.
+    pub(crate) async fn mount_missing_formula(&self, name: &str) {
+        Mock::given(method("GET"))
+            .and(path(format!("/formula/{name}.json")))
+            .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Answer `GET /formula.json`, the bulk index, with one entry per
+    /// `(name, dependencies)` pair.
+    pub(crate) async fn mount_bulk_formula_index(&self, entries: &[(&str, &[&str])]) {
+        let body = serde_json::Value::Array(
+            entries
+                .iter()
+                .map(|(name, deps)| serde_json::json!({ "name": name, "dependencies": deps }))
+                .collect(),
+        );
+
+        Mock::given(method("GET"))
+            .and(path("/formula.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body.to_string()))
+            .mount(&self.server)
+            .await;
+    }
+
     /// Serve a whole bottled formula — JSON and payload — and return its sha256.
     pub(crate) async fn mount_bottled_formula(
         &self,
