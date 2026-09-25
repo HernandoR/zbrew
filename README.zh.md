@@ -174,11 +174,13 @@ zbx jq --version
 zb install jq                   # 安装单个软件包
 zb install wget git             # 安装多个软件包
 zb install --build-from-source jq  # 从源码构建，而不使用 bottle
+zb install --cask docker-desktop   # 按 Homebrew token 安装 cask
 zb bundle                       # 从 Brewfile 安装
 zb bundle install -f myfile     # 从自定义文件安装
 zb bundle dump                  # 将已安装的软件包导出到 Brewfile
 zb bundle dump -f out --force   # 导出到自定义文件（覆盖）
 zb uninstall jq                 # 卸载单个软件包
+zb uninstall --cask docker-desktop # 按 token 卸载 cask
 zb list                         # 列出已安装的软件包
 zb list --all                   # 列出已安装的软件包，包括 zbx 临时安装
 zb info jq                      # 显示某个已安装软件包的详情

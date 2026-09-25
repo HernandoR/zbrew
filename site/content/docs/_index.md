@@ -168,7 +168,9 @@ Each command has a help page. Run `zb <command> --help` to read it.
 zb install jq                      # install one package
 zb install wget git                # install multiple packages
 zb install --build-from-source jq  # build from source instead of a bottle
+zb install --cask docker-desktop   # install a cask by its Homebrew token
 zb uninstall jq                    # uninstall one package
+zb uninstall --cask docker-desktop # uninstall a cask by its token
 zbx jq --version                   # run a package without linking or keeping it
 ```
 

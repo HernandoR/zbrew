@@ -99,6 +99,32 @@ mod tests {
     }
 
     #[test]
+    fn install_accepts_the_cask_flag() {
+        let cli = Cli::try_parse_from(["zb", "install", "--cask", "docker-desktop"]).unwrap();
+        let super::Commands::Install { formulas, cask, .. } = cli.command else {
+            panic!("expected an install command");
+        };
+        assert!(cask);
+        assert_eq!(formulas, vec!["docker-desktop".to_string()]);
+    }
+
+    #[test]
+    fn uninstall_accepts_the_cask_flag() {
+        let cli = Cli::try_parse_from(["zb", "uninstall", "--cask", "docker-desktop"]).unwrap();
+        let super::Commands::Uninstall { formulas, cask, .. } = cli.command else {
+            panic!("expected an uninstall command");
+        };
+        assert!(cask);
+        assert_eq!(formulas, vec!["docker-desktop".to_string()]);
+    }
+
+    #[test]
+    fn uninstall_cask_and_all_conflict() {
+        let result = Cli::try_parse_from(["zb", "uninstall", "--cask", "--all"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn outdated_quiet_and_verbose_conflict() {
         let result = Cli::try_parse_from(["zb", "outdated", "--quiet", "--verbose"]);
         assert!(result.is_err());
@@ -123,6 +149,8 @@ pub enum Commands {
     Install {
         #[arg(required = true, num_args = 1..)]
         formulas: Vec<String>,
+        #[arg(long, help = "Treat every argument as a cask token")]
+        cask: bool,
         #[arg(long, help = "Do not create symlinks after installation")]
         no_link: bool,
         #[arg(long, short = 's', help = "Build from source instead of using bottles")]
@@ -137,6 +165,12 @@ pub enum Commands {
     Uninstall {
         #[arg(required_unless_present = "all", num_args = 1..)]
         formulas: Vec<String>,
+        #[arg(
+            long,
+            conflicts_with = "all",
+            help = "Treat every argument as a cask token"
+        )]
+        cask: bool,
         #[arg(long, help = "Uninstall all installed packages")]
         all: bool,
     },

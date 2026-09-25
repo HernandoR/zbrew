@@ -78,14 +78,18 @@ async fn run(cli: Cli) -> Result<(), zb_core::Error> {
         Commands::Man { .. } => unreachable!(),
         Commands::Install {
             formulas,
+            cask,
             no_link,
             build_from_source,
         } => {
             commands::install::execute(
                 &mut installer,
                 formulas,
-                no_link,
-                build_from_source,
+                commands::install::InstallOptions {
+                    cask,
+                    no_link,
+                    build_from_source,
+                },
                 &mut ui,
             )
             .await
@@ -93,9 +97,11 @@ async fn run(cli: Cli) -> Result<(), zb_core::Error> {
         Commands::Bundle { command } => {
             commands::bundle::execute(&mut installer, command, &mut ui).await
         }
-        Commands::Uninstall { formulas, all } => {
-            commands::uninstall::execute(&mut installer, formulas, all, &mut ui)
-        }
+        Commands::Uninstall {
+            formulas,
+            cask,
+            all,
+        } => commands::uninstall::execute(&mut installer, formulas, cask, all, &mut ui),
         Commands::Migrate { yes, force } => {
             commands::migrate::execute(&mut installer, yes, force, &mut ui).await
         }
