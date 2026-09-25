@@ -335,6 +335,56 @@ mod tests {
         assert_eq!(versions, ["1.0.0", "1.9.0", "1.10.0", "1.10.0_1"]);
     }
 
+    /// The formulas homebrew-core drops are overwhelmingly `@`-versioned, and
+    /// Homebrew publishes those under a `/`-separated OCI path. Recovering the
+    /// formula is worthless if the bottle URL it yields 404s.
+    #[test]
+    fn an_at_versioned_formula_recovers_a_fetchable_bottle_url() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prefix = tmp.path().join("homebrew");
+        write_homebrew_keg(&prefix, "openssl@1.1", "1.1.1w", &[], SHA);
+
+        let formula = HomebrewCellar::at(&prefix)
+            .local_formula("openssl@1.1")
+            .unwrap();
+
+        assert_eq!(formula.name, "openssl@1.1", "the keg name must not change");
+        let bottle = formula
+            .bottle
+            .stable
+            .files
+            .get(get_test_bottle_tag())
+            .expect("a bottle for this platform");
+        assert_eq!(
+            bottle.url,
+            format!("https://ghcr.io/v2/homebrew/core/openssl/1.1/blobs/sha256:{SHA}")
+        );
+    }
+
+    /// A recovered keg-only formula that reads as linkable gets symlinked
+    /// into the prefix, which is the one thing keg-only exists to prevent.
+    #[test]
+    fn a_recovered_keg_only_formula_stays_keg_only() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prefix = tmp.path().join("homebrew");
+        let brew_dir = prefix.join("Cellar/kegonlypkg/3.0.0/.brew");
+        std::fs::create_dir_all(&brew_dir).unwrap();
+        std::fs::write(
+            brew_dir.join("kegonlypkg.rb"),
+            crate::test_support::keg_only_core_formula_ruby("kegonlypkg", "3.0.0", SHA),
+        )
+        .unwrap();
+
+        let formula = HomebrewCellar::at(&prefix)
+            .local_formula("kegonlypkg")
+            .unwrap();
+
+        assert!(
+            formula.is_keg_only(),
+            "a keg-only formula must not be linked into the prefix"
+        );
+    }
+
     #[test]
     fn a_formula_homebrew_never_installed_has_no_local_copy() {
         let tmp = tempfile::TempDir::new().unwrap();

@@ -223,6 +223,15 @@ end
     )
 }
 
+/// Like [`core_formula_ruby`], but keg-only — the shape `openssl@3`,
+/// `icu4c` and `libpq` have.
+pub(crate) fn keg_only_core_formula_ruby(name: &str, version: &str, sha256: &str) -> String {
+    core_formula_ruby(name, version, &[], sha256).replace(
+        "  bottle do",
+        "  keg_only :versioned_formula\n\n  bottle do",
+    )
+}
+
 /// A mock Homebrew API plus the temporary root and prefix an `Installer`
 /// built by [`TestEnv::installer`] operates on.
 pub(crate) struct TestEnv {

@@ -2,7 +2,7 @@ use regex::Regex;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 use zb_core::formula::{
-    Bottle, BottleFile, BottleStable, FormulaUrls, KegOnly, SourceUrl, Versions,
+    Bottle, BottleFile, BottleStable, FormulaUrls, KegOnly, KegOnlyReason, SourceUrl, Versions,
 };
 use zb_core::{Error, Formula};
 
@@ -21,6 +21,14 @@ static URL_VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
         r#"(?m)^\s*url\s+["'][^"']*(?:refs/tags|archive|download)/v?([0-9][0-9A-Za-z._+-]*)"#,
     )
     .expect("URL_VERSION_RE must compile")
+});
+/// `keg_only :provided_by_macos`, `keg_only :shadowed_by_macos, "why"` or
+/// `keg_only "free-text reason"`. The symbol and the string are captured
+/// separately because only the symbol form carries the macOS-specific
+/// meaning `KegOnlyReason::is_macos_specific` matches on.
+static KEG_ONLY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?m)^\s*keg_only\s+(?::([a-z_]+)|["']([^"']+)["'])"#)
+        .expect("KEG_ONLY_RE must compile")
 });
 static REVISION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^\s*revision\s+(\d+)\s*$"#).expect("REVISION_RE must compile")
@@ -376,6 +384,12 @@ pub(crate) fn parse_tap_formula_ruby(spec: &TapFormulaRef, source: &str) -> Resu
         ParsedSourceUrl::NotPresent => None,
     };
 
+    // Without this a keg-only formula recovered from a `.rb` would be
+    // symlinked into the prefix, which is exactly what keg-only exists to
+    // prevent -- and keg-only is overwhelmingly a homebrew-core property
+    // (`openssl@3`, `icu4c`, `libpq`).
+    let (keg_only, keg_only_reason) = parse_keg_only(&source);
+
     if bottle.is_none() && source_url.is_none() {
         return Err(Error::UnsupportedFormula {
             name: spec.formula.clone(),
@@ -389,8 +403,8 @@ pub(crate) fn parse_tap_formula_ruby(spec: &TapFormulaRef, source: &str) -> Resu
         dependencies,
         bottle: bottle.unwrap_or_else(empty_bottle),
         revision,
-        keg_only: KegOnly::default(),
-        keg_only_reason: None,
+        keg_only,
+        keg_only_reason,
         build_dependencies,
         urls: source_url.map(|stable| FormulaUrls {
             stable: Some(stable),
@@ -402,6 +416,39 @@ pub(crate) fn parse_tap_formula_ruby(spec: &TapFormulaRef, source: &str) -> Resu
         requirements: Vec::new(),
         variations: None,
     })
+}
+
+/// Read the `keg_only` directive, if the formula has one.
+///
+/// `KegOnlyReason::reason` holds the Ruby symbol verbatim
+/// (`:provided_by_macos`), because that is both the form the JSON API uses
+/// and the form `is_macos_specific` matches on.
+fn parse_keg_only(source: &str) -> (KegOnly, Option<KegOnlyReason>) {
+    let Some(captures) = KEG_ONLY_RE.captures(source) else {
+        return (KegOnly::No, None);
+    };
+
+    if let Some(symbol) = captures.get(1) {
+        let reason = format!(":{}", symbol.as_str());
+        return (
+            KegOnly::Reason(reason.clone()),
+            Some(KegOnlyReason {
+                reason,
+                explanation: String::new(),
+            }),
+        );
+    }
+
+    match captures.get(2) {
+        Some(text) => (
+            KegOnly::Reason(text.as_str().to_string()),
+            Some(KegOnlyReason {
+                reason: text.as_str().to_string(),
+                explanation: text.as_str().to_string(),
+            }),
+        ),
+        None => (KegOnly::Yes, None),
+    }
 }
 
 fn parse_version(source: &str) -> Option<String> {
@@ -688,7 +735,12 @@ fn build_bottle_url(
 ) -> String {
     let normalized = root_url.trim_end_matches('/');
     if normalized.contains("/v2/") {
-        return format!("{}/{}/blobs/sha256:{}", normalized, spec.formula, sha);
+        return format!(
+            "{}/{}/blobs/sha256:{}",
+            normalized,
+            oci_image_name(&spec.formula),
+            sha
+        );
     }
 
     let effective_version = if revision > 0 {
@@ -710,9 +762,49 @@ fn build_bottle_url(
     }
 }
 
+/// A formula's name as an OCI repository path segment.
+///
+/// GitHub Packages rejects `@` and `+` in image names, so Homebrew's
+/// uploader rewrites them before pushing (`GitHubPackages.image_formula_name`):
+/// `openssl@1.1` is published under `openssl/1.1`. Interpolating the formula
+/// name verbatim would 404 for every `@`-versioned formula -- which is most
+/// of what homebrew-core eventually drops.
+fn oci_image_name(formula: &str) -> String {
+    formula.replace('@', "/").replace('+', "x")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Homebrew publishes an `@`-versioned formula under a `/`-separated OCI
+    /// path (`GitHubPackages.image_formula_name`), and those are exactly the
+    /// formulas homebrew-core eventually drops.
+    #[test]
+    fn an_at_versioned_formula_maps_onto_its_oci_repository_path() {
+        assert_eq!(oci_image_name("openssl@1.1"), "openssl/1.1");
+        assert_eq!(oci_image_name("python@3.8"), "python/3.8");
+        assert_eq!(oci_image_name("libc++"), "libcxx");
+        assert_eq!(oci_image_name("jq"), "jq");
+    }
+
+    /// A keg-only formula that parses as linkable would be symlinked into the
+    /// prefix, which is the one thing keg-only exists to prevent.
+    #[test]
+    fn keg_only_is_read_from_the_formula_source() {
+        let (keg_only, reason) = parse_keg_only("  keg_only :provided_by_macos\n");
+        assert_eq!(keg_only, KegOnly::Reason(":provided_by_macos".to_string()));
+        assert!(reason.unwrap().is_macos_specific());
+
+        let (keg_only, reason) = parse_keg_only("  keg_only \"openssl/libressl conflict\"\n");
+        assert_eq!(
+            keg_only,
+            KegOnly::Reason("openssl/libressl conflict".to_string())
+        );
+        assert!(!reason.unwrap().is_macos_specific());
+
+        assert_eq!(parse_keg_only("  depends_on \"jq\"\n").0, KegOnly::No);
+    }
 
     #[test]
     fn parses_tap_formula_reference() {

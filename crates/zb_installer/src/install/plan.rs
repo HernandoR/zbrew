@@ -187,12 +187,21 @@ impl Installer {
                 let formula = match result {
                     Ok(f) => f,
                     Err(error) => {
-                        // The fallback answers the case the API cannot: a
-                        // formula that was removed from homebrew-core but is
-                        // still installed locally. Anything else -- a network
-                        // failure, a typo -- reaches the local cellar too and
-                        // finds nothing, so it is reported as before.
-                        match local_formulas.and_then(|cellar| cellar.local_formula(&fetch_name)) {
+                        // Only a 404 means "homebrew-core dropped this
+                        // formula", which is the one case the local copy can
+                        // answer. Every name `zb migrate` passes here came
+                        // from `brew leaves`, so by construction it *always*
+                        // has a local copy -- falling back on a 5xx or a
+                        // transport error would let one API outage route the
+                        // entire migration through stale local metadata and
+                        // call it success.
+                        let recovered = if matches!(error, Error::MissingFormula { .. }) {
+                            local_formulas.and_then(|cellar| cellar.local_formula(&fetch_name))
+                        } else {
+                            None
+                        };
+
+                        match recovered {
                             Some(local) => {
                                 warn!(
                                     formula = %fetch_name,
@@ -424,6 +433,51 @@ mod tests {
             .collect();
         planned.sort();
         assert_eq!(planned, ["droppedparent", "livedep"]);
+    }
+
+    /// An API outage must not be mistaken for a dropped formula. Every name
+    /// `zb migrate` passes in came from `brew leaves`, so all of them have a
+    /// local copy -- without this, one 5xx would silently migrate the whole
+    /// machine from stale local metadata and report success.
+    #[tokio::test]
+    async fn a_server_error_is_reported_rather_than_masked_by_the_local_copy() {
+        let env = TestEnv::new().await;
+        Mock::given(method("GET"))
+            .and(path("/formula/outagepkg.json"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&env.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/formula.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+            .mount(&env.server)
+            .await;
+
+        // The local copy exists and would parse fine; the point is that it
+        // must not be reached.
+        let brew_prefix = write_homebrew_keg(
+            &env.tmp_path().join("homebrew-prefix"),
+            "outagepkg",
+            "1.0.0",
+            &[],
+            LOCAL_BOTTLE_SHA,
+        );
+        let cellar = crate::HomebrewCellar::at(&brew_prefix);
+
+        let installer = env.installer();
+        let names = vec!["outagepkg".to_string()];
+        let (plan, failures) = installer
+            .plan_best_effort(&names, false, Some(&cellar))
+            .await;
+
+        assert!(plan.items.is_empty());
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].name, "outagepkg");
+        assert!(
+            matches!(failures[0].error, zb_core::Error::NetworkFailure { .. }),
+            "the outage must surface as itself, got {:?}",
+            failures[0].error
+        );
     }
 
     /// The fallback must not turn a typo into a phantom package: a name
