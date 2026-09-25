@@ -5,6 +5,7 @@ pub mod gc;
 pub mod info;
 pub mod init;
 pub mod install;
+pub mod leaves;
 pub mod list;
 pub mod man;
 pub mod migrate;
