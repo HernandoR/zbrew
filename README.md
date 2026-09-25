@@ -184,11 +184,13 @@ store entries that no package uses.
 zb install jq                   # install one package
 zb install wget git             # install multiple packages
 zb install --build-from-source jq  # build from source instead of a bottle
+zb install --cask docker-desktop   # install a cask by its Homebrew token
 zb bundle                       # install from Brewfile
 zb bundle install -f myfile     # install from a custom file
 zb bundle dump                  # export installed packages to Brewfile
 zb bundle dump -f out --force   # dump to a custom file (overwrite)
 zb uninstall jq                 # uninstall one package
+zb uninstall --cask docker-desktop # uninstall a cask by its token
 zb list                         # list installed packages
 zb list --all                   # list installed packages, zbx temporaries included
 zb info jq                      # show details of an installed package

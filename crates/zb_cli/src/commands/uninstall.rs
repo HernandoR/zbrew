@@ -1,10 +1,11 @@
 use crate::ui::StdUi;
-use crate::utils::normalize_formula_name;
+use crate::utils::normalize_install_target;
 use console::style;
 
 pub fn execute(
     installer: &mut zb_installer::Installer,
     formulas: Vec<String>,
+    cask: bool,
     all: bool,
     ui: &mut StdUi,
 ) -> Result<(), zb_core::Error> {
@@ -18,7 +19,7 @@ pub fn execute(
     } else {
         let mut normalized = Vec::with_capacity(formulas.len());
         for formula in formulas {
-            normalized.push(normalize_formula_name(&formula)?);
+            normalized.push(normalize_install_target(&formula, cask)?);
         }
         normalized
     };
@@ -129,6 +130,7 @@ mod tests {
             &mut installer,
             names(&["rma", "rmb", "rmc"]),
             false,
+            false,
             &mut ui,
         )
         .unwrap();
@@ -161,6 +163,7 @@ mod tests {
         let err = super::execute(
             &mut installer,
             names(&["rmx", "neverinstalled", "rmz"]),
+            false,
             false,
             &mut ui,
         )
@@ -196,6 +199,7 @@ mod tests {
             &mut installer,
             names(&["ghostone", "rmkeep", "ghosttwo"]),
             false,
+            false,
             &mut ui,
         )
         .unwrap_err();
@@ -230,7 +234,7 @@ mod tests {
         install_all(&mut installer, &["alla", "allb"]).await;
 
         let mut ui = StdUi::new();
-        super::execute(&mut installer, Vec::new(), true, &mut ui).unwrap();
+        super::execute(&mut installer, Vec::new(), false, true, &mut ui).unwrap();
 
         assert!(installer.list_installed().unwrap().is_empty());
         assert!(!prefix.join("bin/alla").exists());
