@@ -38,7 +38,7 @@ pub async fn execute(
     } else {
         let mut normalized = Vec::with_capacity(formulas.len());
         for formula in &formulas {
-            normalized.push(resolve_installed_name(installer, formula)?);
+            normalized.push(resolve_installed_name(installer, formula, false)?);
         }
         let mut outdated = Vec::new();
         for name in &normalized {

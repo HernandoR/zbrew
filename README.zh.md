@@ -174,11 +174,13 @@ zbx jq --version
 zb install jq                   # 安装单个软件包
 zb install wget git             # 安装多个软件包
 zb install --build-from-source jq  # 从源码构建，而不使用 bottle
+zb install --cask docker-desktop   # 按 Homebrew token 安装 cask
 zb bundle                       # 从 Brewfile 安装
 zb bundle install -f myfile     # 从自定义文件安装
 zb bundle dump                  # 将已安装的软件包导出到 Brewfile
 zb bundle dump -f out --force   # 导出到自定义文件（覆盖）
 zb uninstall jq                 # 卸载单个软件包
+zb uninstall --cask docker-desktop # 按 token 卸载 cask
 zb list                         # 列出已安装的软件包
 zb list --all                   # 列出已安装的软件包，包括 zbx 临时安装
 zb list --json                  # 以 JSON 格式列出已安装的软件包
@@ -195,6 +197,52 @@ zbx jq --version                # 运行软件包，但不链接、不保留
 ```
 
 每个命令都有帮助页面。运行 `zb <command> --help` 即可阅读。
+
+## Cask
+
+Cask 是 Homebrew 中直接分发预编译应用程序、而不是 bottle 的软件包。Cask 以构件
+（artifact）的形式声明自己的内容，其中 zbrew 支持两类：
+
+- `binary` —— 命令行可执行文件。它会放进 keg 的 `bin` 目录，并像其他命令一样被
+  链接到 prefix 中。
+- `app` —— `.app` 应用程序包。它会先解包到 keg 中，然后被**移动**到应用程序目录，
+  keg 里只留下一个指向其去处的符号链接。应用程序包必须以真实目录的形式放在 macOS
+  查找它的位置，因为 Launch Services 和 Gatekeeper 并不能可靠地跟随符号链接。
+  `zb uninstall` 正是沿着这个符号链接找到并删除已安装的应用程序。
+
+使用 `--cask`，或者直接用 Homebrew 的 token 来指定一个 cask：
+
+```bash
+zb install --cask iterm2                  # 一个应用程序
+zb install --cask visual-studio-code      # 应用程序及其 `code` 命令
+zb install homebrew/cask/iterm2           # 与第一行等价
+zb uninstall --cask iterm2                # 会一并删除 .app 应用程序包
+```
+
+Cask 经常会安装一个位于其应用程序包内部的命令 —— `visual-studio-code` 的 `code`
+命令就是如此。它们会作为同一个软件包一起安装。
+
+`ZBREW_APPDIR` 用于设置 `.app` 的安装位置，必须是绝对路径。在 macOS 上默认为 `/Applications`，
+在其他系统上默认为 `$ZBREW_PREFIX/Applications`，因为 `.app` 在 macOS 之外没有
+意义。zbrew 绝不会覆盖不是自己安装的应用程序包：如果应用程序目录中该名称已被占用，
+安装会报告冲突并停止，而不会替换你自己放进去的应用程序。
+
+Cask 会被安装到 zbrew 自己的目录树中，而不是 Homebrew 的目录树。如果某个 cask
+要求安装到 `/usr/local/bin/docker`，zbrew 会保留 `docker` 这个名字，并把它安装到
+自己的 prefix 下。
+
+### Cask 目前还做不到的事
+
+在使用 cask 之前，有两点限制值得了解：
+
+- **磁盘映像。** zbrew 只能解包 tar 和 zip 归档。下载内容为 `.dmg` 的 cask 会被
+  拒绝并给出明确说明，这排除了相当一部分 cask —— 例如 `ghostty` 和
+  `docker-desktop`。安装 `pkg` 的 cask 同样会被拒绝。
+- **其他构件类型会被忽略。** Cask 还会声明 `manpage`、`zsh_completion`、
+  `bash_completion`、`fish_completion`、`zap`、`uninstall` 等构件。zbrew 只安装
+  `binary` 和 `app` 构件，其余的会被静默跳过，因此 cask 的手册页和 shell 补全不会
+  被安装；`zb uninstall` 删除的是已安装的内容，而不会执行 cask 自带的 `uninstall`
+  或 `zap` 步骤。
 
 ## 手册页 (Manual pages)
 

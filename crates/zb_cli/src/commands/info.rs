@@ -10,7 +10,7 @@ pub async fn execute(
     installer: &mut zb_installer::Installer,
     formula: String,
 ) -> Result<(), zb_core::Error> {
-    let name = resolve_installed_name(installer, &formula)?;
+    let name = resolve_installed_name(installer, &formula, false)?;
     let installed = installer.get_installed(&name);
 
     // Metadata is nice to have, not required: `zb info` must still describe a
@@ -289,8 +289,7 @@ mod tests {
         crate::commands::install::execute(
             &mut installer,
             vec!["infogone".to_string()],
-            false,
-            false,
+            crate::commands::install::InstallOptions::default(),
             &mut ui,
         )
         .await

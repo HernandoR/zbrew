@@ -1,4 +1,5 @@
 mod bottle;
+mod cask;
 pub(crate) mod doctor;
 mod outdated;
 mod plan;
@@ -53,7 +54,60 @@ pub struct Installer {
     linker: Linker,
     pub(crate) db: Database,
     prefix: PathBuf,
+    /// Where a cask's `.app` bundles are installed. See [`default_app_dir`].
+    app_dir: PathBuf,
     locks_dir: PathBuf,
+}
+
+/// Where `.app` bundles from casks are installed when nothing says otherwise:
+/// `/Applications` on macOS, and inside the prefix zbrew already owns
+/// everywhere else, since a `.app` is a macOS concept and only macOS has a
+/// system-wide `/Applications` worth writing to.
+fn default_app_dir(prefix: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        PathBuf::from("/Applications")
+    } else {
+        prefix.join("Applications")
+    }
+}
+
+/// The app directory an installer built by [`create_installer`] uses.
+///
+/// `configured` is `ZBREW_APPDIR` — zbrew's equivalent of Homebrew's
+/// `--appdir` — and wins when set. It has to be absolute: uninstall only
+/// trusts a keg link whose target is an absolute path inside the app
+/// directory, so a relative one would install bundles that can never be
+/// removed. That is refused up front, naming the variable, rather than
+/// discovered at uninstall time.
+///
+/// Without it the default applies. Off macOS that is derived from the prefix,
+/// and `--prefix ./local` is a prefix the CLI passes through as written, so
+/// the derived path can be relative too. That is not the user's mistake and
+/// it must not make `zb list` unusable, so it is resolved against `cwd` —
+/// the same directory a relative prefix is already relative to.
+fn resolve_app_dir(
+    configured: Option<PathBuf>,
+    prefix: &Path,
+    cwd: &Path,
+) -> Result<PathBuf, Error> {
+    if let Some(configured) = configured {
+        if !configured.is_absolute() {
+            return Err(Error::InvalidArgument {
+                message: format!(
+                    "ZBREW_APPDIR must be an absolute path, got '{}'",
+                    configured.display()
+                ),
+            });
+        }
+        return Ok(configured);
+    }
+
+    let default = default_app_dir(prefix);
+    Ok(if default.is_absolute() {
+        default
+    } else {
+        cwd.join(default)
+    })
 }
 
 #[derive(Debug)]
@@ -146,9 +200,23 @@ impl Installer {
             cellar,
             linker,
             db,
+            app_dir: default_app_dir(&prefix),
             prefix,
             locks_dir,
         }
+    }
+
+    /// Install a cask's `.app` bundles somewhere other than
+    /// [`default_app_dir`].
+    ///
+    /// Test-only. In a real run the app directory comes from `ZBREW_APPDIR`
+    /// or the platform default; tests need it injected instead, because an
+    /// environment variable is process-global and they run in parallel.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_app_dir(mut self, app_dir: PathBuf) -> Self {
+        self.app_dir = app_dir;
+        self
     }
 
     pub fn clear_api_cache(&self) -> Result<usize, Error> {
@@ -415,6 +483,14 @@ pub fn create_installer(
     let locks_dir = root.join("locks");
     fs::create_dir_all(&locks_dir).map_err(Error::store("failed to create locks directory"))?;
 
+    let cwd =
+        std::env::current_dir().map_err(Error::store("failed to read the current directory"))?;
+    let app_dir = resolve_app_dir(
+        std::env::var_os("ZBREW_APPDIR").map(PathBuf::from),
+        prefix,
+        &cwd,
+    )?;
+
     let parallel_downloader = ParallelDownloader::with_concurrency(blob_cache, concurrency);
 
     Ok(Installer {
@@ -425,6 +501,7 @@ pub fn create_installer(
         linker,
         db,
         prefix: prefix.to_path_buf(),
+        app_dir,
         locks_dir,
     })
 }
@@ -731,6 +808,214 @@ mod tests {
         assert!(installer.db.get_installed("survivor").is_some());
         assert!(installer.db.get_installed("casualtyone").is_none());
         assert!(installer.db.get_installed("casualtytwo").is_none());
+    }
+
+    /// `ZBREW_APPDIR` wins, and only it is blamed when it is unusable.
+    #[test]
+    fn a_configured_app_dir_wins_and_must_be_absolute() {
+        let prefix = Path::new("/opt/zbrew");
+        let cwd = Path::new("/home/user");
+
+        assert_eq!(
+            resolve_app_dir(Some(PathBuf::from("/Apps")), prefix, cwd).unwrap(),
+            PathBuf::from("/Apps")
+        );
+
+        let err = resolve_app_dir(Some(PathBuf::from("Apps")), prefix, cwd).unwrap_err();
+        assert!(err.to_string().contains("ZBREW_APPDIR"), "got: {err}");
+    }
+
+    /// A relative prefix is the CLI's doing, not the user's `ZBREW_APPDIR`,
+    /// and it must not make every command unusable: the derived app
+    /// directory is resolved against the directory the prefix is already
+    /// relative to.
+    #[test]
+    fn a_prefix_derived_app_dir_is_never_relative() {
+        let cwd = Path::new("/home/user/project");
+
+        let resolved = resolve_app_dir(None, Path::new("./local"), cwd).unwrap();
+        assert!(resolved.is_absolute(), "got {}", resolved.display());
+        if cfg!(not(target_os = "macos")) {
+            assert_eq!(resolved, cwd.join("./local/Applications"));
+        }
+
+        let resolved = resolve_app_dir(None, Path::new("/opt/zbrew"), cwd).unwrap();
+        assert!(resolved.is_absolute());
+    }
+
+    /// An `app` cask is installed end to end: the bundle is unpacked, moved
+    /// into the app directory as a real directory, and the keg keeps a
+    /// symlink to it. Uninstalling takes the bundle with it (issues #54, #55).
+    #[tokio::test]
+    async fn an_app_cask_is_installed_into_the_app_dir_and_removed_again() {
+        let env = TestEnv::new().await;
+
+        let archive = create_cask_app_tarball("Test.app");
+        let archive_sha = sha256_hex(&archive);
+        Mock::given(method("GET"))
+            .and(path("/cask/testapp.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"token":"testapp","version":"1.0.0","url":"{uri}/downloads/testapp.tar.gz",
+                    "sha256":"{archive_sha}","artifacts":[{{"app":["Test.app"]}}]}}"#,
+                uri = env.uri()
+            )))
+            .mount(&env.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/downloads/testapp.tar.gz"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(archive))
+            .mount(&env.server)
+            .await;
+
+        let mut installer = env.cask_installer();
+        let outcome = installer
+            .install(&["cask:testapp".to_string()], true)
+            .await
+            .unwrap();
+
+        assert!(outcome.failed.is_empty(), "failed: {:?}", outcome.failed);
+        assert!(installer.db.get_installed("cask:testapp").is_some());
+
+        let installed = env.app_dir().join("Test.app");
+        assert!(
+            installed.join("Contents/Info.plist").exists(),
+            "the bundle must be unpacked into the app directory"
+        );
+        assert!(
+            !installed.is_symlink(),
+            "macOS will not launch a bundle reliably through a symlink"
+        );
+
+        installer.uninstall("cask:testapp").unwrap();
+
+        assert!(!installer.is_installed("cask:testapp"));
+        assert!(
+            !installed.exists(),
+            "uninstalling the cask must take its app bundle with it"
+        );
+        assert!(
+            env.app_dir().exists(),
+            "the app directory itself belongs to the user"
+        );
+    }
+
+    /// Installing the same app cask twice replaces its own bundle instead of
+    /// tripping over it as if it belonged to somebody else.
+    #[tokio::test]
+    async fn reinstalling_an_app_cask_replaces_the_bundle_it_installed_before() {
+        let env = TestEnv::new().await;
+
+        let archive = create_cask_app_tarball("Test.app");
+        let archive_sha = sha256_hex(&archive);
+        Mock::given(method("GET"))
+            .and(path("/cask/testapp.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"token":"testapp","version":"1.0.0","url":"{uri}/downloads/testapp.tar.gz",
+                    "sha256":"{archive_sha}","artifacts":[{{"app":["Test.app"]}}]}}"#,
+                uri = env.uri()
+            )))
+            .mount(&env.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/downloads/testapp.tar.gz"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(archive))
+            .mount(&env.server)
+            .await;
+
+        let mut installer = env.cask_installer();
+        let first = installer
+            .install(&["cask:testapp".to_string()], true)
+            .await
+            .unwrap();
+        assert!(
+            first.failed.is_empty(),
+            "the first install must succeed for the reinstall to mean anything: {:?}",
+            first.failed
+        );
+
+        let outcome = installer
+            .install(&["cask:testapp".to_string()], true)
+            .await
+            .unwrap();
+
+        assert!(
+            outcome.failed.is_empty(),
+            "a reinstall must not conflict with its own bundle: {:?}",
+            outcome.failed
+        );
+        assert!(env.app_dir().join("Test.app/Contents/Info.plist").exists());
+    }
+
+    /// Installing a newer version of an app cask retires the old install
+    /// whole: its keg, its bundle and its database row. Retiring only the
+    /// bundle left the 1.0.0 keg in the cellar holding a symlink into the
+    /// bundle the 2.0.0 keg now owns -- a trap for anything that later walks
+    /// stale kegs -- and nothing (not `zb doctor`, which keys orphans by name)
+    /// could ever report it.
+    #[tokio::test]
+    async fn installing_a_newer_app_cask_retires_the_old_keg_with_its_bundle() {
+        let env = TestEnv::new().await;
+
+        let archive = create_cask_app_tarball("Test.app");
+        let archive_sha = sha256_hex(&archive);
+        Mock::given(method("GET"))
+            .and(path("/downloads/testapp.tar.gz"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(archive))
+            .mount(&env.server)
+            .await;
+
+        // The API answers 1.0.0 exactly once, then 2.0.0.
+        for (version, times) in [("1.0.0", Some(1u64)), ("2.0.0", None)] {
+            let mock = Mock::given(method("GET"))
+                .and(path("/cask/testapp.json"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"token":"testapp","version":"{version}","url":"{uri}/downloads/testapp.tar.gz",
+                        "sha256":"{archive_sha}","artifacts":[{{"app":["Test.app"]}}]}}"#,
+                uri = env.uri()
+            )));
+            match times {
+                Some(n) => mock.up_to_n_times(n).mount(&env.server).await,
+                None => mock.mount(&env.server).await,
+            }
+        }
+
+        let mut installer = env.cask_installer();
+        let first = installer
+            .install(&["cask:testapp".to_string()], true)
+            .await
+            .unwrap();
+        assert!(first.failed.is_empty(), "{:?}", first.failed);
+        let old_keg = env.root.join("cellar/cask:testapp/1.0.0");
+        assert!(old_keg.exists(), "precondition: the 1.0.0 keg was created");
+
+        let second = installer
+            .install(&["cask:testapp".to_string()], true)
+            .await
+            .unwrap();
+        assert!(second.failed.is_empty(), "{:?}", second.failed);
+
+        assert_eq!(
+            installer.db.get_installed("cask:testapp").unwrap().version,
+            "2.0.0"
+        );
+        assert!(
+            !old_keg.exists(),
+            "the 1.0.0 keg must not linger in the cellar after 2.0.0 replaced it"
+        );
+        assert!(env.root.join("cellar/cask:testapp/2.0.0").exists());
+        assert!(
+            env.app_dir().join("Test.app/Contents/Info.plist").exists(),
+            "the new bundle must be in place"
+        );
+        assert!(
+            installer
+                .db
+                .list_keg_files()
+                .unwrap()
+                .iter()
+                .all(|record| record.version != "1.0.0"),
+            "keg_files rows for the retired version must be gone"
+        );
     }
 
     /// Casks and formulas are independent packages. A formula that fails must
