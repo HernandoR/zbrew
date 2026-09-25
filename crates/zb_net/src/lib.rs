@@ -21,4 +21,5 @@ pub(crate) mod tls;
 pub use api::ApiClient;
 pub use cache::ApiCache;
 pub use download::{DownloadProgressCallback, DownloadRequest, DownloadResult, ParallelDownloader};
+pub use tap_formula::parse_core_formula_ruby;
 pub use tls::shared_tls_config;
