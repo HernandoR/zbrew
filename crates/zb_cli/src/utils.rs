@@ -35,6 +35,21 @@ pub fn normalize_formula_name(name: &str) -> Result<String, zb_core::Error> {
     Ok(trimmed.to_string())
 }
 
+/// The internal install name for one command-line argument.
+///
+/// This is [`normalize_formula_name`] plus the `--cask` flag: the flag says
+/// "every argument is a cask token", which is the same thing as writing the
+/// `cask:` prefix by hand, so a name that already carries the prefix (or that
+/// came in as `homebrew/cask/<token>`) is left alone rather than being
+/// prefixed twice.
+pub fn normalize_install_target(name: &str, cask: bool) -> Result<String, zb_core::Error> {
+    let normalized = normalize_formula_name(name)?;
+    if cask && !normalized.starts_with("cask:") {
+        return Ok(format!("cask:{normalized}"));
+    }
+    Ok(normalized)
+}
+
 pub fn format_formula_suggestions(requested: &str, suggestions: &[String]) -> Option<String> {
     if suggestions.is_empty() {
         return None;
@@ -83,7 +98,17 @@ pub async fn suggest_missing_formula_matches(
     false
 }
 
-pub fn suggest_homebrew(formula: &str, error: &zb_core::Error) {
+/// Tell the user that `name` is out of zbrew's reach and hand them the
+/// Homebrew command that installs it.
+///
+/// `name` is an install name, not the raw argument, so a cask reaches this
+/// function as `cask:<token>` and gets the `--cask` form of the suggestion.
+pub fn suggest_homebrew(name: &str, error: &zb_core::Error) {
+    let (display_name, brew_command) = match name.strip_prefix("cask:") {
+        Some(token) => (token, format!("brew install --cask {token}")),
+        None => (name, format!("brew install {name}")),
+    };
+
     eprintln!();
     eprintln!(
         "{} This package can't be installed with zbrew.",
@@ -98,7 +123,7 @@ pub fn suggest_homebrew(formula: &str, error: &zb_core::Error) {
     if cfg!(target_os = "android") {
         eprintln!(
             "      {} {}",
-            style(formula).yellow().bold(),
+            style(display_name).yellow().bold(),
             style(
                 "is not compatible with Termux - homebrew bottles are not available for Android."
             )
@@ -111,10 +136,7 @@ pub fn suggest_homebrew(formula: &str, error: &zb_core::Error) {
         );
     } else {
         eprintln!("      Try installing with Homebrew instead:");
-        eprintln!(
-            "      {}",
-            style(format!("brew install {}", formula)).cyan()
-        );
+        eprintln!("      {}", style(brew_command).cyan());
     }
 
     eprintln!();
@@ -191,7 +213,7 @@ mod tests {
 
     use super::{
         format_formula_suggestions, get_prefix_path_for_os, normalize_formula_name,
-        suggest_missing_formula_matches,
+        normalize_install_target, suggest_missing_formula_matches,
     };
 
     #[test]
@@ -264,6 +286,33 @@ mod tests {
         assert_eq!(
             normalize_formula_name("homebrew/cask/docker-desktop").unwrap(),
             "cask:docker-desktop".to_string()
+        );
+    }
+
+    #[test]
+    fn cask_flag_prefixes_a_bare_token() {
+        assert_eq!(
+            normalize_install_target("docker-desktop", true).unwrap(),
+            "cask:docker-desktop".to_string()
+        );
+    }
+
+    #[test]
+    fn cask_flag_does_not_prefix_a_name_that_already_resolves_to_a_cask() {
+        for name in ["cask:docker-desktop", "homebrew/cask/docker-desktop"] {
+            assert_eq!(
+                normalize_install_target(name, true).unwrap(),
+                "cask:docker-desktop".to_string(),
+                "{name} must normalize to a single cask: prefix"
+            );
+        }
+    }
+
+    #[test]
+    fn without_the_cask_flag_a_bare_token_stays_a_formula() {
+        assert_eq!(
+            normalize_install_target("wget", false).unwrap(),
+            "wget".to_string()
         );
     }
 

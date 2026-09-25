@@ -176,7 +176,16 @@ async fn install_from_file(
 
     let start = Instant::now();
     for formula in missing {
-        install::execute(installer, vec![formula.to_string()], no_link, false, ui).await?;
+        install::execute(
+            installer,
+            vec![formula.to_string()],
+            install::InstallOptions {
+                no_link,
+                ..Default::default()
+            },
+            ui,
+        )
+        .await?;
     }
 
     println!(
