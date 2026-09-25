@@ -185,6 +185,7 @@ zb list                         # 列出已安装的软件包
 zb list --all                   # 列出已安装的软件包，包括 zbx 临时安装
 zb list --json                  # 以 JSON 格式列出已安装的软件包
 zb info jq                      # 显示软件包的简介、占用空间和依赖
+zb leaves                       # 列出没有被其他软件包依赖的软件包
 zb update                       # 刷新缓存的软件包元数据
 zb outdated                     # 列出有新版本可用的软件包
 zb upgrade                      # 升级所有已过期的软件包
@@ -271,6 +272,7 @@ zbrew 的命令沿用 Homebrew 的名称。
 | 安装软件包 | `brew install jq` | `zb install jq` |
 | 删除软件包 | `brew uninstall jq` | `zb uninstall jq` |
 | 列出已安装的软件包 | `brew list` | `zb list` |
+| 列出没有被依赖的软件包 | `brew leaves` | `zb leaves` |
 | 显示软件包详情 | `brew info jq` | `zb info jq` |
 | 刷新软件包元数据 | `brew update` | `zb update` |
 | 查找已过期的软件包 | `brew outdated` | `zb outdated` |

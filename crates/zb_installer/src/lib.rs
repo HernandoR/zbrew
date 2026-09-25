@@ -22,5 +22,5 @@ pub use cellar::{Cellar, Linker};
 pub use homebrew::{HomebrewMigrationPackages, HomebrewPackage, get_homebrew_packages};
 pub use install::doctor::{DiagnosticReport, RepairSummary};
 pub use install::{
-    ExecuteResult, GcOutcome, InstallPlan, Installer, OutdatedPackage, create_installer,
+    ExecuteResult, GcOutcome, InstallPlan, Installer, Leaves, OutdatedPackage, create_installer,
 };

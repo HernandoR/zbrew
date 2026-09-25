@@ -287,6 +287,11 @@ pub enum Commands {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
+    /// List installed formulas that nothing else installed depends on
+    Leaves {
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
     /// Show information about an installed package
     Info {
         #[arg(help = "Name of the installed package")]

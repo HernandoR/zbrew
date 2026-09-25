@@ -195,6 +195,7 @@ zb list                         # list installed packages
 zb list --all                   # list installed packages, zbx temporaries included
 zb list --json                  # list installed packages as JSON
 zb info jq                      # show a package's description, size and dependencies
+zb leaves                       # list packages nothing else depends on
 zb update                       # refresh the cached package metadata
 zb outdated                     # list packages with newer versions
 zb upgrade                      # upgrade all outdated packages
@@ -288,6 +289,7 @@ The zbrew commands use the Homebrew names.
 | Install a package | `brew install jq` | `zb install jq` |
 | Remove a package | `brew uninstall jq` | `zb uninstall jq` |
 | List installed packages | `brew list` | `zb list` |
+| List packages nothing depends on | `brew leaves` | `zb leaves` |
 | Show package details | `brew info jq` | `zb info jq` |
 | Refresh the package metadata | `brew update` | `zb update` |
 | Find outdated packages | `brew outdated` | `zb outdated` |
