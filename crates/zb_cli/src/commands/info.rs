@@ -4,13 +4,13 @@ use std::path::Path;
 use walkdir::WalkDir;
 use zb_store::InstalledKeg;
 
-use crate::utils::normalize_formula_name;
+use crate::utils::resolve_installed_name;
 
 pub async fn execute(
     installer: &mut zb_installer::Installer,
     formula: String,
 ) -> Result<(), zb_core::Error> {
-    let name = normalize_formula_name(&formula)?;
+    let name = resolve_installed_name(installer, &formula)?;
     let installed = installer.get_installed(&name);
 
     // Metadata is nice to have, not required: `zb info` must still describe a

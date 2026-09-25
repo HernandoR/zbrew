@@ -6,7 +6,7 @@ use std::time::Instant;
 use zb_core::{InstallProgress, ProgressCallback};
 
 use crate::ui::StdUi;
-use crate::utils::normalize_formula_name;
+use crate::utils::resolve_installed_name;
 
 pub async fn execute(
     installer: &mut zb_installer::Installer,
@@ -37,7 +37,7 @@ pub async fn execute(
     } else {
         let mut normalized = Vec::with_capacity(formulas.len());
         for formula in &formulas {
-            normalized.push(normalize_formula_name(formula)?);
+            normalized.push(resolve_installed_name(installer, formula)?);
         }
         let mut outdated = Vec::new();
         for name in &normalized {
