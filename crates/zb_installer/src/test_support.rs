@@ -171,6 +171,58 @@ end
     )
 }
 
+/// A stand-in for the Homebrew Cellar: `<prefix>/Cellar/<name>/<version>/.brew/<name>.rb`,
+/// holding the formula Ruby source Homebrew keeps beside each keg. Returns
+/// the prefix.
+pub(crate) fn write_homebrew_keg(
+    prefix: &Path,
+    name: &str,
+    version: &str,
+    deps: &[&str],
+    sha256: &str,
+) -> PathBuf {
+    let brew_dir = prefix.join("Cellar").join(name).join(version).join(".brew");
+    fs::create_dir_all(&brew_dir).unwrap();
+    fs::write(
+        brew_dir.join(format!("{name}.rb")),
+        core_formula_ruby(name, version, deps, sha256),
+    )
+    .unwrap();
+    prefix.to_path_buf()
+}
+
+/// The Ruby source of a bottled homebrew-core formula, as the Cellar holds it.
+pub(crate) fn core_formula_ruby(name: &str, version: &str, deps: &[&str], sha256: &str) -> String {
+    let class_name = name
+        .split(|c: char| !c.is_alphanumeric())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<String>();
+    let depends_on = deps
+        .iter()
+        .map(|dep| format!("  depends_on \"{dep}\"\n"))
+        .collect::<String>();
+
+    format!(
+        r#"class {class_name} < Formula
+  desc "A formula the API no longer serves"
+  homepage "https://example.invalid/{name}"
+  version "{version}"
+{depends_on}
+  bottle do
+    sha256 cellar: :any_skip_relocation, {tag}: "{sha256}"
+  end
+end
+"#,
+        tag = get_test_bottle_tag()
+    )
+}
+
 /// A mock Homebrew API plus the temporary root and prefix an `Installer`
 /// built by [`TestEnv::installer`] operates on.
 pub(crate) struct TestEnv {

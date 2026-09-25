@@ -337,6 +337,22 @@ fn resolve_version_interpolation(source: &str) -> String {
     }
 }
 
+/// Parse a homebrew-core formula out of its Ruby source.
+///
+/// Homebrew keeps a copy of the formula it installed at
+/// `<prefix>/Cellar/<name>/<version>/.brew/<name>.rb`, which is the only
+/// description left of a formula the JSON API has since dropped. The core tap
+/// is `homebrew/core`, so the bottle root URL falls back to
+/// `https://ghcr.io/v2/homebrew/core` -- exactly where those bottles live.
+pub fn parse_core_formula_ruby(name: &str, source: &str) -> Result<Formula, Error> {
+    let spec = TapFormulaRef {
+        owner: "homebrew".to_string(),
+        repo: "core".to_string(),
+        formula: name.to_string(),
+    };
+    parse_tap_formula_ruby(&spec, source)
+}
+
 pub(crate) fn parse_tap_formula_ruby(spec: &TapFormulaRef, source: &str) -> Result<Formula, Error> {
     let source = preprocess_tap_source(source);
     let stable = parse_version(&source).unwrap_or_else(|| "0".to_string());

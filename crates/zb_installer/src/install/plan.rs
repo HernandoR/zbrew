@@ -4,6 +4,7 @@ use tracing::warn;
 use zb_core::{BuildPlan, Error, Formula, InstallMethod, PackageFailure, select_bottle};
 
 use super::{InstallPlan, Installer, PlannedInstall};
+use crate::homebrew::HomebrewCellar;
 
 impl Installer {
     pub async fn plan(&self, names: &[String]) -> Result<InstallPlan, Error> {
@@ -30,12 +31,21 @@ impl Installer {
         })
     }
 
+    /// Plan what can be planned, reporting the rest instead of failing.
+    ///
+    /// `local_formulas`, when given, stands in for the API: a formula
+    /// homebrew-core has dropped is still described by the copy Homebrew kept
+    /// beside its keg, and `zb migrate` has to reproduce exactly the packages
+    /// the user has installed -- including those.
     pub async fn plan_best_effort(
         &self,
         names: &[String],
         build_from_source: bool,
+        local_formulas: Option<&HomebrewCellar>,
     ) -> (InstallPlan, Vec<PackageFailure>) {
-        let (formulas, fetch_failures) = self.fetch_all_formulas_best_effort(names).await;
+        let (formulas, fetch_failures) = self
+            .fetch_all_formulas_best_effort(names, local_formulas)
+            .await;
         let mut items = Vec::new();
         let mut failures = Vec::new();
         let mut valid_roots = Vec::new();
@@ -144,6 +154,7 @@ impl Installer {
     async fn fetch_all_formulas_best_effort(
         &self,
         names: &[String],
+        local_formulas: Option<&HomebrewCellar>,
     ) -> (BTreeMap<String, Formula>, HashMap<String, Error>) {
         let mut formulas = BTreeMap::new();
         let mut failures = HashMap::new();
@@ -176,8 +187,24 @@ impl Installer {
                 let formula = match result {
                     Ok(f) => f,
                     Err(error) => {
-                        failures.insert(fetch_name, error);
-                        continue;
+                        // The fallback answers the case the API cannot: a
+                        // formula that was removed from homebrew-core but is
+                        // still installed locally. Anything else -- a network
+                        // failure, a typo -- reaches the local cellar too and
+                        // finds nothing, so it is reported as before.
+                        match local_formulas.and_then(|cellar| cellar.local_formula(&fetch_name)) {
+                            Some(local) => {
+                                warn!(
+                                    formula = %fetch_name,
+                                    "using Homebrew's local copy of the formula; the API no longer serves it"
+                                );
+                                local
+                            }
+                            None => {
+                                failures.insert(fetch_name, error);
+                                continue;
+                            }
+                        }
                     }
                 };
 
@@ -312,6 +339,128 @@ mod tests {
     use wiremock::{Mock, ResponseTemplate};
 
     use crate::test_support::*;
+
+    const LOCAL_BOTTLE_SHA: &str =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+
+    /// A formula homebrew-core has dropped -- `fasd` is the reported case --
+    /// is still installed on the user's machine, so `zb migrate` has to
+    /// reproduce it. Homebrew's own copy of the formula is the only
+    /// description of it left.
+    #[tokio::test]
+    async fn a_formula_the_api_dropped_is_planned_from_homebrews_local_copy() {
+        let env = TestEnv::new().await;
+        Mock::given(method("GET"))
+            .and(path("/formula/droppedpkg.json"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&env.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/formula.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+            .mount(&env.server)
+            .await;
+
+        let brew_prefix = write_homebrew_keg(
+            &env.tmp_path().join("homebrew-prefix"),
+            "droppedpkg",
+            "1.0.1",
+            &[],
+            LOCAL_BOTTLE_SHA,
+        );
+        let cellar = crate::HomebrewCellar::at(&brew_prefix);
+
+        let installer = env.installer();
+        let names = vec!["droppedpkg".to_string()];
+        let (plan, failures) = installer
+            .plan_best_effort(&names, false, Some(&cellar))
+            .await;
+
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.items[0].install_name, "droppedpkg");
+        assert_eq!(plan.items[0].formula.versions.stable, "1.0.1");
+    }
+
+    /// The fallback has to sit inside the fetch loop, not beside it: a
+    /// recovered formula's own dependencies still have to be resolved, or the
+    /// plan fails on a dependency that was never fetched.
+    #[tokio::test]
+    async fn a_locally_recovered_formulas_dependencies_are_still_fetched() {
+        let env = TestEnv::new().await;
+        env.mount_bottled_formula("livedep", "2.0.0", create_bottle_tarball("livedep"))
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/formula/droppedparent.json"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&env.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/formula.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+            .mount(&env.server)
+            .await;
+
+        let brew_prefix = write_homebrew_keg(
+            &env.tmp_path().join("homebrew-prefix"),
+            "droppedparent",
+            "3.2.1",
+            &["livedep"],
+            LOCAL_BOTTLE_SHA,
+        );
+        let cellar = crate::HomebrewCellar::at(&brew_prefix);
+
+        let installer = env.installer();
+        let names = vec!["droppedparent".to_string()];
+        let (plan, failures) = installer
+            .plan_best_effort(&names, false, Some(&cellar))
+            .await;
+
+        assert!(failures.is_empty(), "{failures:?}");
+        let mut planned: Vec<&str> = plan
+            .items
+            .iter()
+            .map(|item| item.install_name.as_str())
+            .collect();
+        planned.sort();
+        assert_eq!(planned, ["droppedparent", "livedep"]);
+    }
+
+    /// The fallback must not turn a typo into a phantom package: a name
+    /// Homebrew has never installed is still a failure.
+    #[tokio::test]
+    async fn a_name_absent_from_both_the_api_and_the_cellar_still_fails() {
+        let env = TestEnv::new().await;
+        Mock::given(method("GET"))
+            .and(path("/formula/ghostpkg.json"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&env.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/formula.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+            .mount(&env.server)
+            .await;
+
+        let brew_prefix = write_homebrew_keg(
+            &env.tmp_path().join("homebrew-prefix"),
+            "somethingelse",
+            "1.0.0",
+            &[],
+            LOCAL_BOTTLE_SHA,
+        );
+        let cellar = crate::HomebrewCellar::at(&brew_prefix);
+
+        let installer = env.installer();
+        let names = vec!["ghostpkg".to_string()];
+        let (plan, failures) = installer
+            .plan_best_effort(&names, false, Some(&cellar))
+            .await;
+
+        assert!(plan.items.is_empty());
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].name, "ghostpkg");
+    }
 
     #[tokio::test]
     async fn plans_tapped_formula_with_core_dependency() {
@@ -477,7 +626,7 @@ mod tests {
 
         let installer = env.installer();
         let names = vec!["goodpkg".to_string(), "missingpkg".to_string()];
-        let (plan, failures) = installer.plan_best_effort(&names, false).await;
+        let (plan, failures) = installer.plan_best_effort(&names, false, None).await;
 
         assert_eq!(plan.items.len(), 1);
         assert_eq!(plan.items[0].install_name, "goodpkg");
