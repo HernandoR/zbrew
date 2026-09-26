@@ -323,6 +323,54 @@ zbrew adds three things of its own:
 zbrew is experimental. Run zbrew and Homebrew together on the same machine. Do
 **not** delete Homebrew and replace it with zbrew, unless you accept the risk.
 
+### Mirrors
+
+zbrew reads the same mirror environment variables as Homebrew, so a shell
+profile that already points `brew` at a mirror points `zb` at it too.
+
+| Variable | Effect | Default |
+|---|---|---|
+| `HOMEBREW_API_DOMAIN` | Base URL for formula and cask metadata | `https://formulae.brew.sh/api` |
+| `HOMEBREW_ARTIFACT_DOMAIN` | Prefix for every download, bottles included | — |
+| `HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK` | Fail instead of trying the default URL | unset |
+
+A mirror is preferred and the default is the fallback, so a mirror that is
+down, out of date, or missing a file does not stop zbrew finding the package.
+Metadata requests try the mirror first and only then the default. Bottle
+downloads are a race rather than a strict order: zbrew opens several
+connections at once and keeps whichever answers first, so the default domain
+is still contacted even when the mirror is healthy. Set
+`HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK` when a request must never leave the
+mirror — it leaves exactly one candidate, so there is no race.
+
+`HOMEBREW_BOTTLE_DOMAIN` is **not** supported yet. Homebrew serves flat
+`name--version.tag.bottle.tar.gz` files from a non-GitHub-Packages bottle
+domain, and zbrew cannot yet produce that filename; rather than rewrite URLs
+the mirrors would answer with a 404, zbrew ignores the variable. Use
+`HOMEBREW_ARTIFACT_DOMAIN` with a registry-proxying mirror instead. Tracked in
+[#120](https://github.com/HernandoR/zbrew/issues/120).
+
+`HOMEBREW_ARTIFACT_DOMAIN` prefixes an ordinary download URL whole, so
+`https://example.com/foo.tar.gz` becomes
+`$HOMEBREW_ARTIFACT_DOMAIN/https://example.com/foo.tar.gz`. A bottle URL is
+different: the registry host is replaced, so
+`https://ghcr.io/v2/homebrew/core/jq/manifests/1.7` becomes
+`$HOMEBREW_ARTIFACT_DOMAIN/v2/homebrew/core/jq/manifests/1.7`. If the value
+already contains a `/v2` path, that segment is not repeated.
+
+An example that uses one mirror for both metadata and bottles. The bottle
+mirror must proxy the GitHub Packages registry, which is what
+`HOMEBREW_ARTIFACT_DOMAIN` addresses:
+
+```bash
+export HOMEBREW_API_DOMAIN=https://mirrors.example.edu/homebrew-bottles/api
+export HOMEBREW_ARTIFACT_DOMAIN=https://mirrors.example.edu/v2/ghcr-io
+```
+
+zbrew also keeps its own `ZBREW_API_URL`, which names the formula metadata
+base directly. It wins over `HOMEBREW_API_DOMAIN` and gets no fallback.
+
+
 ## How it works
 
 `zb install <package>` does these steps:
