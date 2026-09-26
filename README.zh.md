@@ -278,6 +278,7 @@ zbrew 的命令沿用 Homebrew 的名称。
 | 查找已过期的软件包 | `brew outdated` | `zb outdated` |
 | 升级软件包 | `brew upgrade` | `zb upgrade` |
 | 从 Brewfile 安装 | `brew bundle` | `zb bundle` |
+| 检查 Brewfile 是否已满足 | `brew bundle check` | `zb bundle check` |
 | 写出 Brewfile | `brew bundle dump` | `zb bundle dump` |
 | 检查安装 | `brew doctor` | `zb doctor` |
 | 删除无用文件 | `brew cleanup` | `zb gc` |
@@ -304,6 +305,49 @@ zbrew 自己增加了三样东西：
 
 zbrew 处于实验阶段。请让 zbrew 与 Homebrew 在同一台机器上并存。**不要**删除 Homebrew
 并用 zbrew 取代它，除非你能接受由此带来的风险。
+
+### 镜像 (Mirrors)
+
+zbrew 读取与 Homebrew 相同的镜像环境变量。已经为 `brew` 配置过镜像的 shell
+配置文件，对 `zb` 同样生效。
+
+| 变量 | 作用 | 默认值 |
+|---|---|---|
+| `HOMEBREW_API_DOMAIN` | formula 与 cask 元数据的基地址 | `https://formulae.brew.sh/api` |
+| `HOMEBREW_ARTIFACT_DOMAIN` | 所有下载（含 bottle）的前缀 | — |
+| `HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK` | 失败时直接报错，不回退到默认地址 | 未设置 |
+
+zbrew 优先使用镜像，默认地址作为回退，因此镜像宕机、落后或缺少文件时仍能找到
+该软件包。元数据请求严格先镜像后默认；bottle 下载则是竞速而非严格顺序：zbrew
+同时打开多条连接，谁先返回就用谁，所以即使镜像健康，默认地址也仍会被访问。如果
+请求绝对不能离开镜像，请设置 `HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK`——它只保留
+一个候选地址，因此不会发生竞速。
+
+`HOMEBREW_BOTTLE_DOMAIN` 目前**尚未**支持。当 bottle 域名不是 GitHub Packages
+时，Homebrew 提供的是扁平的 `name--version.tag.bottle.tar.gz` 文件，而 zbrew
+还无法构造该文件名；与其重写出镜像必然 404 的地址，不如直接忽略该变量。请改用
+`HOMEBREW_ARTIFACT_DOMAIN` 搭配支持 registry 代理的镜像。进展见
+[#120](https://github.com/HernandoR/zbrew/issues/120)。
+
+`HOMEBREW_ARTIFACT_DOMAIN` 对普通下载地址做整体前缀，因此
+`https://example.com/foo.tar.gz` 变成
+`$HOMEBREW_ARTIFACT_DOMAIN/https://example.com/foo.tar.gz`。bottle 地址不同：
+被替换的是 registry 主机名，因此
+`https://ghcr.io/v2/homebrew/core/jq/manifests/1.7` 变成
+`$HOMEBREW_ARTIFACT_DOMAIN/v2/homebrew/core/jq/manifests/1.7`。若该变量的值本身
+已含 `/v2` 路径，则不会重复该段。
+
+元数据与 bottle 使用同一个镜像的示例。bottle 镜像需要能代理 GitHub Packages
+registry，这正是 `HOMEBREW_ARTIFACT_DOMAIN` 负责的场景：
+
+```bash
+export HOMEBREW_API_DOMAIN=https://mirrors.example.edu/homebrew-bottles/api
+export HOMEBREW_ARTIFACT_DOMAIN=https://mirrors.example.edu/v2/ghcr-io
+```
+
+zbrew 自己的 `ZBREW_API_URL` 仍然保留，它直接指定 formula 元数据的基地址。
+它的优先级高于 `HOMEBREW_API_DOMAIN`，并且没有回退。
+
 
 ## 工作原理 (How it works)
 
