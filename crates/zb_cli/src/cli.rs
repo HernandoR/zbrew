@@ -360,6 +360,17 @@ pub enum BundleCommands {
         #[arg(long, help = "Do not create symlinks after installation")]
         no_link: bool,
     },
+    /// Report whether every Brewfile entry is installed
+    Check {
+        #[arg(
+            long,
+            short = 'f',
+            value_name = "FILE",
+            default_value = "Brewfile",
+            help = "Path to the Brewfile"
+        )]
+        file: PathBuf,
+    },
     /// Dump installed packages to a Brewfile
     Dump {
         #[arg(

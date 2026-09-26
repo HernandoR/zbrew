@@ -277,6 +277,7 @@ zbrew 的命令沿用 Homebrew 的名称。
 | 查找已过期的软件包 | `brew outdated` | `zb outdated` |
 | 升级软件包 | `brew upgrade` | `zb upgrade` |
 | 从 Brewfile 安装 | `brew bundle` | `zb bundle` |
+| 检查 Brewfile 是否已满足 | `brew bundle check` | `zb bundle check` |
 | 写出 Brewfile | `brew bundle dump` | `zb bundle dump` |
 | 检查安装 | `brew doctor` | `zb doctor` |
 | 删除无用文件 | `brew cleanup` | `zb gc` |

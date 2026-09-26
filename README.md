@@ -294,6 +294,7 @@ The zbrew commands use the Homebrew names.
 | Find outdated packages | `brew outdated` | `zb outdated` |
 | Upgrade packages | `brew upgrade` | `zb upgrade` |
 | Install from a Brewfile | `brew bundle` | `zb bundle` |
+| Check a Brewfile is satisfied | `brew bundle check` | `zb bundle check` |
 | Write a Brewfile | `brew bundle dump` | `zb bundle dump` |
 | Check the installation | `brew doctor` | `zb doctor` |
 | Delete unused files | `brew cleanup` | `zb gc` |
