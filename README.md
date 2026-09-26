@@ -193,7 +193,8 @@ zb uninstall jq                 # uninstall one package
 zb uninstall --cask docker-desktop # uninstall a cask by its token
 zb list                         # list installed packages
 zb list --all                   # list installed packages, zbx temporaries included
-zb info jq                      # show details of an installed package
+zb list --json                  # list installed packages as JSON
+zb info jq                      # show a package's description, size and dependencies
 zb leaves                       # list packages nothing else depends on
 zb update                       # refresh the cached package metadata
 zb outdated                     # list packages with newer versions
@@ -301,10 +302,9 @@ The zbrew commands use the Homebrew names.
 | Run a package one time | — | `zbx jq --version` |
 | Copy packages from Homebrew | — | `zb migrate` |
 
-Two differences are important. `zb info` reads an installed package, but
-`brew info` also reads a package that you did not install. `zb migrate` copies
-your Homebrew packages into zbrew, and it can then remove them from Homebrew.
-`zb migrate` asks before it removes anything.
+One difference is important. `zb migrate` copies your Homebrew packages into
+zbrew, and it can then remove them from Homebrew. `zb migrate` asks before it
+removes anything.
 
 Some Homebrew features have no zbrew command yet. The list includes
 `brew search`, `brew tap` and `brew services`. Use Homebrew for that work.

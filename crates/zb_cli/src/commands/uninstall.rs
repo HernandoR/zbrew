@@ -1,5 +1,5 @@
 use crate::ui::StdUi;
-use crate::utils::normalize_install_target;
+use crate::utils::resolve_installed_name;
 use console::style;
 
 pub fn execute(
@@ -19,7 +19,7 @@ pub fn execute(
     } else {
         let mut normalized = Vec::with_capacity(formulas.len());
         for formula in formulas {
-            normalized.push(normalize_install_target(&formula, cask)?);
+            normalized.push(resolve_installed_name(installer, &formula, cask)?);
         }
         normalized
     };

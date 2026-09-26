@@ -30,6 +30,18 @@ static KEG_ONLY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^\s*keg_only\s+(?::([a-z_]+)|["']([^"']+)["'])"#)
         .expect("KEG_ONLY_RE must compile")
 });
+/// `desc`, `homepage` and `license` are what `brew info` prints under the
+/// formula name; the JSON API supplies them for homebrew-core, and a tap
+/// formula carries them as plain directives.
+static DESC_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?m)^\s*desc\s+["']([^"']+)["']"#).expect("DESC_RE must compile")
+});
+static HOMEPAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?m)^\s*homepage\s+["']([^"']+)["']"#).expect("HOMEPAGE_RE must compile")
+});
+static LICENSE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?m)^\s*license\s+["']([^"']+)["']"#).expect("LICENSE_RE must compile")
+});
 static REVISION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^\s*revision\s+(\d+)\s*$"#).expect("REVISION_RE must compile")
 });
@@ -401,6 +413,9 @@ pub(crate) fn parse_tap_formula_ruby(spec: &TapFormulaRef, source: &str) -> Resu
         name: spec.formula.clone(),
         versions: Versions { stable },
         dependencies,
+        desc: capture_first(&DESC_RE, &source),
+        homepage: capture_first(&HOMEPAGE_RE, &source),
+        license: capture_first(&LICENSE_RE, &source),
         bottle: bottle.unwrap_or_else(empty_bottle),
         revision,
         keg_only,
@@ -418,6 +433,11 @@ pub(crate) fn parse_tap_formula_ruby(spec: &TapFormulaRef, source: &str) -> Resu
     })
 }
 
+fn capture_first(re: &Regex, source: &str) -> Option<String> {
+    re.captures(source)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+}
 /// Read the `keg_only` directive, if the formula has one.
 ///
 /// `KegOnlyReason::reason` holds the Ruby symbol verbatim

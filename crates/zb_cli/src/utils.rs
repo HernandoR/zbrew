@@ -35,6 +35,37 @@ pub fn normalize_formula_name(name: &str) -> Result<String, zb_core::Error> {
     Ok(trimmed.to_string())
 }
 
+/// Resolve a name the user typed against what is actually installed.
+///
+/// Casks are stored under a `cask:` install name so they cannot collide with
+/// a formula of the same name, but that prefix is an internal key: `zb list`
+/// prints a cask as `docker`, and a name you can read out of `zb list` has to
+/// work when you type it back into another command.
+///
+/// `cask` is `--cask`, which states the answer outright; this only guesses
+/// when the user said nothing.
+///
+/// Only consulted for commands that act on installed packages. `zb install`
+/// deliberately does not use it — there, a bare name means a formula and
+/// `--cask` or a `cask:` prefix is how you ask for a cask.
+pub fn resolve_installed_name(
+    installer: &Installer,
+    name: &str,
+    cask: bool,
+) -> Result<String, zb_core::Error> {
+    let normalized = normalize_install_target(name, cask)?;
+
+    if installer.is_installed(&normalized) || normalized.starts_with("cask:") {
+        return Ok(normalized);
+    }
+
+    let as_cask = format!("cask:{normalized}");
+    if installer.is_installed(&as_cask) {
+        return Ok(as_cask);
+    }
+
+    Ok(normalized)
+}
 /// The internal install name for one command-line argument.
 ///
 /// This is [`normalize_formula_name`] plus the `--cask` flag: the flag says
@@ -213,8 +244,92 @@ mod tests {
 
     use super::{
         format_formula_suggestions, get_prefix_path_for_os, normalize_formula_name,
-        normalize_install_target, suggest_missing_formula_matches,
+        normalize_install_target, resolve_installed_name, suggest_missing_formula_matches,
     };
+
+    /// An `Installer` over a scratch root, with `installed` already recorded
+    /// under the install names given.
+    fn installer_holding(
+        root: &std::path::Path,
+        prefix: &std::path::Path,
+        installed: &[&str],
+    ) -> Installer {
+        fs::create_dir_all(root.join("db")).unwrap();
+        let mut db = Database::open(&root.join("db/zb.sqlite3")).unwrap();
+        {
+            let tx = db.transaction().unwrap();
+            for name in installed {
+                tx.record_install(name, "1.0.0", "key", zb_store::InstallReason::Retained)
+                    .unwrap();
+            }
+            tx.commit().unwrap();
+        }
+
+        Installer::new(
+            ApiClient::new(),
+            BlobCache::new(&root.join("cache")).unwrap(),
+            Store::new(root).unwrap(),
+            Cellar::new(root).unwrap(),
+            Linker::new(prefix).unwrap(),
+            db,
+            prefix.to_path_buf(),
+            root.join("locks"),
+        )
+    }
+
+    /// `zb list` prints a cask as `docker`, so `docker` has to work when the
+    /// user types it back into a command that acts on installed packages.
+    /// Before this, only the internal `cask:docker` key resolved.
+    #[test]
+    fn a_bare_name_resolves_to_an_installed_cask() {
+        let tmp = TempDir::new().unwrap();
+        let installer = installer_holding(
+            &tmp.path().join("zbrew"),
+            &tmp.path().join("homebrew"),
+            &["cask:docker"],
+        );
+
+        assert_eq!(
+            resolve_installed_name(&installer, "docker", false).unwrap(),
+            "cask:docker"
+        );
+    }
+
+    /// A formula always wins over a cask of the same name: the formula is
+    /// what the bare name has always meant, and silently switching which
+    /// package a command acts on would be worse than the round-trip gap.
+    #[test]
+    fn an_installed_formula_keeps_the_bare_name() {
+        let tmp = TempDir::new().unwrap();
+        let installer = installer_holding(
+            &tmp.path().join("zbrew"),
+            &tmp.path().join("homebrew"),
+            &["docker", "cask:docker"],
+        );
+
+        assert_eq!(
+            resolve_installed_name(&installer, "docker", false).unwrap(),
+            "docker"
+        );
+    }
+
+    /// A name that is not installed as a cask must keep resolving as a
+    /// formula, or the commands would start guessing.
+    #[test]
+    fn a_bare_name_with_no_installed_cask_stays_a_formula() {
+        let tmp = TempDir::new().unwrap();
+        let installer =
+            installer_holding(&tmp.path().join("zbrew"), &tmp.path().join("homebrew"), &[]);
+
+        assert_eq!(
+            resolve_installed_name(&installer, "jq", false).unwrap(),
+            "jq"
+        );
+        assert_eq!(
+            resolve_installed_name(&installer, "cask:docker", false).unwrap(),
+            "cask:docker"
+        );
+    }
 
     #[test]
     fn macos_default_prefix_is_root() {

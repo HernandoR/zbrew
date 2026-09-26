@@ -283,6 +283,9 @@ mod tests {
                 stable: "2024-01-01".to_string(),
             },
             dependencies: Vec::new(),
+            desc: None,
+            homepage: None,
+            license: None,
             bottle: Bottle {
                 stable: BottleStable { files, rebuild: 0 },
             },
@@ -322,6 +325,9 @@ mod tests {
                 stable: "0.1.0".to_string(),
             },
             dependencies: Vec::new(),
+            desc: None,
+            homepage: None,
+            license: None,
             bottle: Bottle {
                 stable: BottleStable { files, rebuild: 0 },
             },
@@ -363,6 +369,9 @@ mod tests {
                 stable: "0.1.0".to_string(),
             },
             dependencies: Vec::new(),
+            desc: None,
+            homepage: None,
+            license: None,
             bottle: Bottle {
                 stable: BottleStable { files, rebuild: 0 },
             },
@@ -446,6 +455,9 @@ mod tests {
                 stable: "18.3".to_string(),
             },
             dependencies: Vec::new(),
+            desc: None,
+            homepage: None,
+            license: None,
             bottle: Bottle {
                 stable: BottleStable { files, rebuild: 0 },
             },
@@ -495,6 +507,9 @@ mod tests {
                 stable: "18.3".to_string(),
             },
             dependencies: Vec::new(),
+            desc: None,
+            homepage: None,
+            license: None,
             bottle: Bottle {
                 stable: BottleStable { files, rebuild: 0 },
             },

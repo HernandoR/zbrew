@@ -125,6 +125,9 @@ mod tests {
                 stable: "1.0.0".to_string(),
             },
             dependencies: deps.iter().map(|dep| dep.to_string()).collect(),
+            desc: None,
+            homepage: None,
+            license: None,
             bottle: Bottle {
                 stable: BottleStable { files, rebuild: 0 },
             },

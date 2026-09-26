@@ -1,25 +1,22 @@
 use console::style;
 use zb_store::InstalledKeg;
 
-pub fn execute(installer: &mut zb_installer::Installer, all: bool) -> Result<(), zb_core::Error> {
+pub fn execute(
+    installer: &mut zb_installer::Installer,
+    all: bool,
+    json: bool,
+) -> Result<(), zb_core::Error> {
     let installed = installer.list_installed()?;
     let (shown, hidden) = partition_for_display(&installed, all);
+
+    if json {
+        return print_json(&shown);
+    }
 
     if shown.is_empty() {
         println!("No formulas installed.");
     } else {
-        for keg in shown {
-            if keg.reason.is_transient() {
-                println!(
-                    "{} {} {}",
-                    style(&keg.name).bold(),
-                    style(&keg.version).dim(),
-                    style("(temporary)").yellow()
-                );
-            } else {
-                println!("{} {}", style(&keg.name).bold(), style(&keg.version).dim());
-            }
-        }
+        print_grouped(&shown);
     }
 
     if hidden > 0 {
@@ -32,6 +29,78 @@ pub fn execute(installer: &mut zb_installer::Installer, all: bool) -> Result<(),
     }
 
     Ok(())
+}
+
+/// A cask is not a formula, and a flat alphabetical list buries the handful of
+/// casks among the dependencies. `brew list` separates them the same way.
+fn print_grouped(shown: &[&InstalledKeg]) {
+    let (casks, formulas): (Vec<&InstalledKeg>, Vec<&InstalledKeg>) = shown
+        .iter()
+        .copied()
+        .partition(|keg| cask_token(&keg.name).is_some());
+    // With nothing to separate from, a heading is noise.
+    let headed = !formulas.is_empty() && !casks.is_empty();
+
+    for (heading, kegs) in [("Formulae", &formulas), ("Casks", &casks)] {
+        if kegs.is_empty() {
+            continue;
+        }
+        if headed {
+            println!("{} {}", style("==>").cyan().bold(), style(heading).bold());
+        }
+        for keg in kegs {
+            print_keg(keg);
+        }
+    }
+}
+
+fn print_keg(keg: &InstalledKeg) {
+    let name = cask_token(&keg.name).unwrap_or(&keg.name);
+    if keg.reason.is_transient() {
+        println!(
+            "{} {} {}",
+            style(name).bold(),
+            style(&keg.version).dim(),
+            style("(temporary)").yellow()
+        );
+    } else {
+        println!("{} {}", style(name).bold(), style(&keg.version).dim());
+    }
+}
+
+/// Machine-readable output, for the callers that were parsing the coloured
+/// human listing because there was nothing else to read.
+fn print_json(shown: &[&InstalledKeg]) -> Result<(), zb_core::Error> {
+    let entries: Vec<_> = shown
+        .iter()
+        .map(|keg| {
+            let (kind, name) = match cask_token(&keg.name) {
+                Some(token) => ("cask", token),
+                None => ("formula", keg.name.as_str()),
+            };
+            serde_json::json!({
+                "name": name,
+                "kind": kind,
+                "version": keg.version,
+                "store_key": keg.store_key,
+                "installed_at": keg.installed_at,
+                "install_reason": keg.reason.as_str(),
+            })
+        })
+        .collect();
+
+    let rendered =
+        serde_json::to_string_pretty(&entries).map_err(|e| zb_core::Error::FileError {
+            message: format!("failed to render list as JSON: {e}"),
+        })?;
+    println!("{rendered}");
+    Ok(())
+}
+
+/// Casks are recorded under a `cask:` install name so they cannot collide with
+/// a formula of the same name.
+fn cask_token(install_name: &str) -> Option<&str> {
+    install_name.strip_prefix("cask:")
 }
 
 /// Split installed kegs into the ones to print and a count of the ones
@@ -98,5 +167,13 @@ mod tests {
 
         assert_eq!(shown.len(), 1);
         assert_eq!(hidden, 0);
+    }
+
+    /// The `cask:` prefix is an internal key, not something to print or to
+    /// hand a caller parsing the JSON.
+    #[test]
+    fn a_cask_is_reported_by_its_token_and_its_kind() {
+        assert_eq!(cask_token("cask:docker"), Some("docker"));
+        assert_eq!(cask_token("jq"), None);
     }
 }

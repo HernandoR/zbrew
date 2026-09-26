@@ -105,9 +105,9 @@ async fn run(cli: Cli) -> Result<(), zb_core::Error> {
             commands::migrate::execute(&mut installer, yes, force, &mut ui).await
         }
         Commands::Doctor { repair } => commands::doctor::execute(&mut installer, repair, &mut ui),
-        Commands::List { all } => commands::list::execute(&mut installer, all),
+        Commands::List { all, json } => commands::list::execute(&mut installer, all, json),
         Commands::Leaves { json } => commands::leaves::execute(&mut installer, json).await,
-        Commands::Info { formula } => commands::info::execute(&mut installer, formula),
+        Commands::Info { formula } => commands::info::execute(&mut installer, formula).await,
         Commands::Gc => commands::gc::execute(&mut installer),
         Commands::Update => commands::update::execute(&mut installer),
         Commands::Outdated { json } => {
